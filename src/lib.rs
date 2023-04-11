@@ -215,28 +215,6 @@ fn wasm_type_gen_struct_named_fields(
                 })
             }
         }
-
-        impl #struct_name {
-            #[allow(dead_code)]
-            pub fn to_binary_slice(&self) -> Vec<u8> {
-                let mut out = vec![];
-                self.add_to_slice(&mut out);
-                out
-            }
-            #[allow(dead_code)]
-            #[allow(unused_assignments)]
-            pub fn from_binary_slice(data: Vec<u8>) -> Option<Self> {
-                let mut index = 0;
-                let first_4 = data.get(index..index + 4)?;
-                index += 4;
-                let first_4_u32_bytes = [first_4[0], first_4[1], first_4[2], first_4[3]];
-                let len = u32::from_be_bytes(first_4_u32_bytes) as usize;
-                // let next_data = data.get(index..index + len)?;
-                let out: Self = <_>::get_from_slice(&mut index, &data)?;
-                index += len;
-                Some(out)
-            }
-        }
     })
 }
 
@@ -400,28 +378,6 @@ fn wasm_type_gen_enum_named_fields(
                 })
             }
         }
-
-        impl #name {
-            #[allow(dead_code)]
-            pub fn to_binary_slice(&self) -> Vec<u8> {
-                let mut out = vec![];
-                self.add_to_slice(&mut out);
-                out
-            }
-            #[allow(dead_code)]
-            #[allow(unused_assignments)]
-            pub fn from_binary_slice(data: Vec<u8>) -> Option<Self> {
-                let mut index = 0;
-                let first_4 = data.get(index..index + 4)?;
-                index += 4;
-                let first_4_u32_bytes = [first_4[0], first_4[1], first_4[2], first_4[3]];
-                let len = u32::from_be_bytes(first_4_u32_bytes) as usize;
-                // let next_data = data.get(index..index + len)?;
-                let out: Self = <_>::get_from_slice(&mut index, &data)?;
-                index += len;
-                Some(out)
-            }
-        }
     })
 }
 
@@ -449,6 +405,25 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
         #transfer_impl_block
 
         impl #name {
+            #[allow(dead_code)]
+            pub fn to_binary_slice(&self) -> Vec<u8> {
+                let mut out = vec![];
+                self.add_to_slice(&mut out);
+                out
+            }
+            #[allow(dead_code)]
+            #[allow(unused_assignments)]
+            pub fn from_binary_slice(data: Vec<u8>) -> Option<Self> {
+                let mut index = 0;
+                let first_4 = data.get(index..index + 4)?;
+                index += 4;
+                let first_4_u32_bytes = [first_4[0], first_4[1], first_4[2], first_4[3]];
+                let len = u32::from_be_bytes(first_4_u32_bytes) as usize;
+                // let next_data = data.get(index..index + len)?;
+                let out: Self = <_>::get_from_slice(&mut index, &data)?;
+                index += len;
+                Some(out)
+            }
             pub fn include_in_rs_wasm() -> String {
                 let strings = [
                     #structdef,
