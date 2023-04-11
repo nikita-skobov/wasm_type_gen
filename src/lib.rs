@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
-use syn::{parse_macro_input, DeriveInput, Data, Fields, Type, FieldsNamed};
-use quote::{quote, ToTokens};
+use syn::{parse_macro_input, DeriveInput, Data, Fields, Type, FieldsNamed, DataEnum};
+use quote::{quote, ToTokens, format_ident};
 
 #[proc_macro]
 pub fn generate_wasm_entrypoint(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -240,22 +240,207 @@ fn wasm_type_gen_struct_named_fields(
     })
 }
 
+/// Returns a tuple of:
+/// - Vec of token streams, each one is an 'add_include' to the generated include_in_rs_wasm() function
+/// - and the impl block as 1 TokenStream
+fn wasm_type_gen_enum_named_fields(
+    name: &proc_macro2::Ident,
+    dataenum: &DataEnum,
+) -> (Vec<proc_macro2::TokenStream>, proc_macro2::TokenStream) {
+    let variants = &dataenum.variants;
+    let num_variants = variants.len();
+    if num_variants == 0 {
+        panic!("Cannot derive WasmTypeGen for enum with 0 variants");
+    }
+
+    let add_to_slice_variants = variants.iter().enumerate().map(|(index, v)| {
+        let ident = &v.ident;
+        match &v.fields {
+            Fields::Named(fields) => {
+                let field_names = fields.named.iter().map(|field| {
+                    let ident = &field.ident;
+                    quote! {
+                        #ident,
+                    }
+                });
+                let field_names_add_to_self_data = fields.named.iter().map(|field| {
+                    let ident = &field.ident;
+                    quote! {
+                        #ident.add_to_slice(&mut self_data);
+                    }
+                });
+                quote! {
+                    Self::#ident { #(#field_names)* } => {
+                        let variant: u32 = #index as _;
+                        let variant_bytes = variant.to_be_bytes();
+                        self_data.extend(variant_bytes);
+                        // there's data so add it:
+                        #(#field_names_add_to_self_data)*
+                    }
+                }
+            }
+            Fields::Unnamed(fields) => {
+                let field_names = fields.unnamed.iter().enumerate().map(|(index, _)| {
+                    let varname = format_ident!("a{}", index);
+                    quote! {
+                        #varname,
+                    }
+                });
+                let field_names_add_to_self_data = fields.unnamed.iter().enumerate().map(|(index, _)| {
+                    let varname = format_ident!("a{}", index);
+                    quote! {
+                        #varname.add_to_slice(&mut self_data);
+                    }
+                });
+                quote! {
+                    Self::#ident(#(#field_names)*) => {
+                        let variant: u32 = #index as _;
+                        let variant_bytes = variant.to_be_bytes();
+                        self_data.extend(variant_bytes);
+                        // there's data so add it:
+                        #(#field_names_add_to_self_data)*
+                    }
+                }
+            }
+            Fields::Unit => {
+                quote! {
+                    Self::#ident => {
+                        let variant: u32 = #index as _;
+                        let variant_bytes = variant.to_be_bytes();
+                        self_data.extend(variant_bytes);
+                        // unit variant, no need to add data.
+                    }
+                }
+            }
+        }
+    });
+
+    let get_from_slice_variants = variants.iter().enumerate().map(|(index, v)| {
+        let ident = &v.ident;
+        let index = index as u32;
+
+        let variant_data_fill = match &v.fields {
+            Fields::Named(fields) => {
+                let field_names = fields.named.iter().map(|field| {
+                    let ident = &field.ident;
+                    quote! {
+                        #ident,
+                    }
+                });
+                let fields_fill_data = fields.named.iter().map(|field| {
+                    let ident = &field.ident;
+                    let ty = &field.ty;
+                    quote! {
+                        let #ident: #ty = <_>::get_from_slice(index, data)?;
+                    }
+                });
+                quote!{
+                    #(#fields_fill_data)*
+                    Self::#ident { #(#field_names)* }
+                }
+            }
+            Fields::Unnamed(fields) => {
+                let field_names = fields.unnamed.iter().enumerate().map(|(index, _)| {
+                    let varname = format_ident!("a{}", index);
+                    quote! {
+                        #varname,
+                    }
+                });
+                let fields_fill_data = fields.unnamed.iter().enumerate().map(|(index, field)| {
+                    let varname = format_ident!("a{}", index);
+                    let ty = &field.ty;
+                    quote! {
+                        let #varname: #ty = <_>::get_from_slice(index, data)?;
+                    }
+                });
+                quote!{
+                    #(#fields_fill_data)*
+                    Self::#ident(#(#field_names)*)
+                }
+            }
+            Fields::Unit => {
+                quote!{
+                    Self::#ident
+                }
+            }
+        };
+
+        quote! {
+            #index => {
+                #variant_data_fill
+            }
+        }
+    });
+
+    let mut add_includes = vec![];
+    (add_includes, quote! {
+        impl ToBinarySlice for #name {
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let mut self_data: Vec<u8> = vec![];
+                match self {
+                    #(#add_to_slice_variants)*
+                }
+                let self_data_len = self_data.len() as u32;
+                let self_data_bytes = self_data_len.to_be_bytes();
+                data.extend(self_data_bytes);
+                data.extend(self_data);
+            }
+        }
+
+        impl FromBinarySlice for #name {
+            #[allow(unused_assignments)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                let first_4 = data.get(*index..*index + 4)?;
+                *index += 4;
+                let first_4_u32_bytes = [first_4[0], first_4[1], first_4[2], first_4[3]];
+                let variant = u32::from_be_bytes(first_4_u32_bytes);
+                Some(match variant {
+                    #(#get_from_slice_variants)*
+                    _ => return None,
+                })
+            }
+        }
+
+        impl #name {
+            #[allow(dead_code)]
+            pub fn to_binary_slice(&self) -> Vec<u8> {
+                let mut out = vec![];
+                self.add_to_slice(&mut out);
+                out
+            }
+            #[allow(dead_code)]
+            #[allow(unused_assignments)]
+            pub fn from_binary_slice(data: Vec<u8>) -> Option<Self> {
+                let mut index = 0;
+                let first_4 = data.get(index..index + 4)?;
+                index += 4;
+                let first_4_u32_bytes = [first_4[0], first_4[1], first_4[2], first_4[3]];
+                let len = u32::from_be_bytes(first_4_u32_bytes) as usize;
+                // let next_data = data.get(index..index + len)?;
+                let out: Self = <_>::get_from_slice(&mut index, &data)?;
+                index += len;
+                Some(out)
+            }
+        }
+    })
+}
+
 #[proc_macro_derive(WasmTypeGen)]
 pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let item_cloned = item.clone();
     let thing = parse_macro_input!(item_cloned as DeriveInput);
-    let struct_name = thing.ident;
+    let name = thing.ident;
     let structdef = item.to_string();
 
     // Get a list of the fields in the struct
     let (add_includes, transfer_impl_block) = match thing.data {
         Data::Struct(ref data) => match data.fields {
-            Fields::Named(ref fields) => wasm_type_gen_struct_named_fields(&struct_name, fields),
+            Fields::Named(ref fields) => wasm_type_gen_struct_named_fields(&name, fields),
             _ => unimplemented!("WasmTypeGen not implemented for non-named struct fields"),
         },
         Data::Enum(ref data) => {
-            todo!()
-        }
+            wasm_type_gen_enum_named_fields(&name, data)
+        },
         _ => unimplemented!(),
     };
     let transfer_impl_block_str = transfer_impl_block.to_string();
@@ -263,7 +448,7 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let expanded = quote! {
         #transfer_impl_block
 
-        impl #struct_name {
+        impl #name {
             pub fn include_in_rs_wasm() -> String {
                 let strings = [
                     #structdef,
