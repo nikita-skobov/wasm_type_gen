@@ -428,4 +428,96 @@ mod tests {
         let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
         assert_eq!(item2, item2);
     }
+
+    #[test]
+    fn works_for_enums() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub enum Abc {
+            Unit,
+            Named { x: u32, y: u32 },
+            NonNamed(u32),
+        }
+
+        let item = Abc::Unit;
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+
+        let item = Abc::Named { x: 2, y: 30 };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+
+        let item = Abc::NonNamed(100);
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_option_of_enum() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub child: Option<Abc2>,
+        }
+
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub enum Abc2 {
+            Unit,
+            Named { x: u32, y: u32 },
+            NonNamed(u32),
+        }
+
+        let item = Abc {
+            child: Some(Abc2::NonNamed(1)),
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        println!("{:?}", data);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_advanced_struct() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub child: Option<Abc2>,
+            pub e_num: Abc3,
+        }
+
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc2 {
+            pub a: u32,
+        }
+
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub enum Abc3 {
+            Child(Abc2),
+            Nothing,
+        }
+
+        let item = Abc {
+            child: Some(Abc2 { a: 2 }),
+            e_num: Abc3::Child(Abc2 { a: 3 }),
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        println!("{:?}", data);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
 }
