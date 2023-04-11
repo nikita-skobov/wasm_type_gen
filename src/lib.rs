@@ -150,7 +150,7 @@ fn set_include_wasm(add_includes: &mut Vec<proc_macro2::TokenStream>, ty: &Type)
             // want to add this to the string that should be exported to the wasm file.
             _ => {
                 add_includes.push(quote! {
-                    #ty::include_in_rs_wasm()
+                    #ty::include_in_rs_wasm(),
                 });
             }
         }
