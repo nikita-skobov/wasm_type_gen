@@ -378,4 +378,27 @@ mod tests {
         assert_eq!(item2.s, item2.s);
         assert_eq!(item2.u2, item2.u2);
     }
+
+    #[test]
+    fn ser_deser_works_other_types() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub child: Abc2,
+        }
+
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc2 {
+            pub u: u32,
+        }
+        let item = Abc {
+            child: Abc2 { u: 1 },
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
 }
