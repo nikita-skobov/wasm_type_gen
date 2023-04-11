@@ -401,4 +401,31 @@ mod tests {
         let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
         assert_eq!(item2, item2);
     }
+
+    #[test]
+    fn ser_deser_works_options() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub a: u32,
+            pub b: Option<u32>,
+            pub child: Option<Abc2>,
+        }
+
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc2 {
+            pub u: Option<u32>,
+        }
+        let item = Abc {
+            a: 0,
+            b: None,
+            child: Some(Abc2 { u: Some(1) }),
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
 }
