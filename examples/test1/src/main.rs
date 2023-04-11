@@ -1,6 +1,6 @@
 use std::{path::PathBuf, process::{Command, Stdio}, io::{Write, Read}};
 
-use wasm_type_gen::{MyThing, generate_wasm_entrypoint, generate_parsing_traits};
+use wasm_type_gen::{WasmTypeGen, generate_wasm_entrypoint, generate_parsing_traits};
 use wasmtime::*;
 
 mod willbewasm;
@@ -271,7 +271,7 @@ generate_parsing_traits!();
 //     }
 // }
 
-#[derive(MyThing)]
+#[derive(WasmTypeGen)]
 pub struct Thing {
     pub s: String,
     pub q: u32,
@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn ser_deser_works() {
-        #[derive(MyThing)]
+        #[derive(WasmTypeGen)]
         pub struct Abc {
             pub u1: u32,
             pub s: String,

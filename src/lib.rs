@@ -157,7 +157,7 @@ fn set_include_wasm(add_includes: &mut Vec<proc_macro2::TokenStream>, ty: &Type)
     }
 }
 
-#[proc_macro_derive(MyThing)]
+#[proc_macro_derive(WasmTypeGen)]
 pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let item_cloned = item.clone();
     let thing = parse_macro_input!(item_cloned as DeriveInput);
