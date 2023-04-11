@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use syn::{parse_macro_input, DeriveInput, Data, Fields};
+use syn::{parse_macro_input, DeriveInput, Data, Fields, Type};
 use quote::{quote, ToTokens};
 
 #[proc_macro]
@@ -130,7 +130,32 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
     TokenStream::from(expanded)
 }
 
-
+fn set_include_wasm(add_includes: &mut Vec<proc_macro2::TokenStream>, ty: &Type) {
+    if let syn::Type::Path(p) = ty {
+        let type_path = p.path.segments.last()
+            .map(|f| f.ident.to_string()).unwrap_or("u32".to_string());
+        match type_path.as_str() {
+            "u32" => {},
+            "String" => {},
+            "Option" => {
+                if let Some(last_seg) = &p.path.segments.last() {
+                    if let syn::PathArguments::AngleBracketed(ab) = &last_seg.arguments {
+                        if let Some(syn::GenericArgument::Type(p)) = ab.args.first() {
+                            set_include_wasm(add_includes, p);
+                        }
+                    }
+                }
+            },
+            // this is a non-standard type, so we
+            // want to add this to the string that should be exported to the wasm file.
+            _ => {
+                add_includes.push(quote! {
+                    #ty::include_in_rs_wasm()
+                });
+            }
+        }
+    }
+}
 
 #[proc_macro_derive(MyThing)]
 pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -173,48 +198,7 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut add_includes = vec![];
     for field in fields.iter() {
         let ty = &field.ty;
-
-        if let syn::Type::Path(p) = ty {
-            let type_path = p.path.segments.last().map(|f| f.ident.to_string()).unwrap_or("u32".to_string());
-            match type_path.as_str() {
-                "u32" => {},
-                "String" => {},
-                "Option" => {
-                    match &p.path.segments.last().unwrap().arguments {
-                        syn::PathArguments::AngleBracketed(ab) => {
-                            match ab.args.first().unwrap() {
-                                syn::GenericArgument::Type(p) => {
-                                    if let syn::Type::Path(p) = p {
-                                        if let Some(seg) = p.path.segments.last() {
-                                            let id_str = seg.ident.to_string();
-                                            
-                                            // TODO: recurse, and add this as a type
-                                            // to add_includes...
-                                        }
-                                    }
-                                }
-                                syn::GenericArgument::Lifetime(_) => todo!(),
-                                syn::GenericArgument::Const(_) => todo!(),
-                                syn::GenericArgument::AssocType(_) => todo!(),
-                                syn::GenericArgument::AssocConst(_) => todo!(),
-                                syn::GenericArgument::Constraint(_) => todo!(),
-                                _ => todo!(),
-                            }
-                        }
-                        syn::PathArguments::None => todo!(),
-                        syn::PathArguments::Parenthesized(_) => todo!(),
-                    }
-                    println!("{:#?}", p);
-                },
-                // this is a non-standard type, so we
-                // want to add this to the string that should be exported to the wasm file.
-                _ => {
-                    add_includes.push(quote! {
-                        #ty::include_in_rs_wasm()
-                    });
-                }
-            }
-        }
+        set_include_wasm(&mut add_includes, ty);
     }
 
     let transfer_impl_block = quote! {
