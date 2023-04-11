@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use syn::{parse_macro_input, DeriveInput, Data, Fields, Type};
+use syn::{parse_macro_input, DeriveInput, Data, Fields, Type, FieldsNamed};
 use quote::{quote, ToTokens};
 
 #[proc_macro]
@@ -157,22 +157,14 @@ fn set_include_wasm(add_includes: &mut Vec<proc_macro2::TokenStream>, ty: &Type)
     }
 }
 
-#[proc_macro_derive(WasmTypeGen)]
-pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let item_cloned = item.clone();
-    let thing = parse_macro_input!(item_cloned as DeriveInput);
-    let struct_name = thing.ident;
-    let structdef = item.to_string();
-
-    // Get a list of the fields in the struct
-    let fields = match thing.data {
-        Data::Struct(ref data) => match data.fields {
-            Fields::Named(ref fields) => &fields.named,
-            _ => unimplemented!(),
-        },
-        _ => unimplemented!(),
-    };
-
+/// Returns a tuple of:
+/// - Vec of token streams, each one is an 'add_include' to the generated include_in_rs_wasm() function
+/// - and the impl block as 1 TokenStream
+fn wasm_type_gen_struct_named_fields(
+    struct_name: &proc_macro2::Ident,
+    fields: &FieldsNamed,
+) -> (Vec<proc_macro2::TokenStream>, proc_macro2::TokenStream) {
+    let fields = &fields.named;
     let add_to_slice_fields = fields.iter().map(|field| {
         let ident = &field.ident;
         quote! {
@@ -201,7 +193,7 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
         set_include_wasm(&mut add_includes, ty);
     }
 
-    let transfer_impl_block = quote! {
+    (add_includes, quote! {
         impl ToBinarySlice for #struct_name {
             fn add_to_slice(&self, data: &mut Vec<u8>) {
                 let mut self_data = vec![];
@@ -245,6 +237,26 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 Some(out)
             }
         }
+    })
+}
+
+#[proc_macro_derive(WasmTypeGen)]
+pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let item_cloned = item.clone();
+    let thing = parse_macro_input!(item_cloned as DeriveInput);
+    let struct_name = thing.ident;
+    let structdef = item.to_string();
+
+    // Get a list of the fields in the struct
+    let (add_includes, transfer_impl_block) = match thing.data {
+        Data::Struct(ref data) => match data.fields {
+            Fields::Named(ref fields) => wasm_type_gen_struct_named_fields(&struct_name, fields),
+            _ => unimplemented!("WasmTypeGen not implemented for non-named struct fields"),
+        },
+        Data::Enum(ref data) => {
+            todo!()
+        }
+        _ => unimplemented!(),
     };
     let transfer_impl_block_str = transfer_impl_block.to_string();
 
@@ -270,8 +282,6 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
             }
         }
     };
-
-    // println!("OUTPUTTING\n{}", expanded.to_string());
 
     // Hand the output tokens back to the compiler
     TokenStream::from(expanded)
