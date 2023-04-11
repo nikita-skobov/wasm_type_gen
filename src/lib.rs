@@ -208,7 +208,8 @@ fn wasm_type_gen_struct_named_fields(
         impl FromBinarySlice for #struct_name {
             #[allow(unused_assignments)]
             fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
-                // let mut index = 0;
+                // to skip the size of Self
+                *index += 4;
                 #(#get_from_slice_fields)*
                 Some(Self {
                     #(#field_names)*
@@ -383,6 +384,8 @@ fn wasm_type_gen_enum_named_fields(
         impl FromBinarySlice for #name {
             #[allow(unused_assignments)]
             fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // skip self len
+                *index += 4;
                 let first_4 = data.get(*index..*index + 4)?;
                 *index += 4;
                 let first_4_u32_bytes = [first_4[0], first_4[1], first_4[2], first_4[3]];
@@ -414,11 +417,7 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
         },
         _ => unimplemented!(),
     };
-    let transfer_impl_block_str = transfer_impl_block.to_string();
-
-    let expanded = quote! {
-        #transfer_impl_block
-
+    let transfer_impl_block2 = quote! {
         impl #name {
             #[allow(dead_code)]
             pub fn to_binary_slice(&self) -> Vec<u8> {
@@ -430,19 +429,30 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
             #[allow(unused_assignments)]
             pub fn from_binary_slice(data: Vec<u8>) -> Option<Self> {
                 let mut index = 0;
-                let first_4 = data.get(index..index + 4)?;
-                index += 4;
-                let first_4_u32_bytes = [first_4[0], first_4[1], first_4[2], first_4[3]];
-                let len = u32::from_be_bytes(first_4_u32_bytes) as usize;
-                // let next_data = data.get(index..index + len)?;
+                // let first_4 = data.get(index..index + 4)?;
+                // index += 4;
+                // let first_4_u32_bytes = [first_4[0], first_4[1], first_4[2], first_4[3]];
+                // let len = u32::from_be_bytes(first_4_u32_bytes) as usize;
+                // // let next_data = data.get(index..index + len)?;
                 let out: Self = <_>::get_from_slice(&mut index, &data)?;
-                index += len;
+                // index += len;
                 Some(out)
             }
+        }
+    };
+    let transfer_impl_block_str = transfer_impl_block.to_string();
+    let transfer_impl_block2_str = transfer_impl_block2.to_string();
+
+    let expanded = quote! {
+        #transfer_impl_block
+        #transfer_impl_block2
+
+        impl #name {
             pub fn include_in_rs_wasm() -> String {
                 let strings = [
                     #structdef,
                     #transfer_impl_block_str,
+                    #transfer_impl_block2_str,
                     "",
                 ];
                 let mut out = strings.join("\n").to_string();
