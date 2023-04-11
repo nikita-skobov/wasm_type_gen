@@ -356,19 +356,26 @@ mod tests {
 
     #[test]
     fn ser_deser_works() {
-        let mything = Thing {
+        #[derive(MyThing)]
+        pub struct Abc {
+            pub u1: u32,
+            pub s: String,
+            pub u2: u32,
+        }
+        let item = Abc {
             s: "abcd".into(),
             // o: Other { abc: 2 },
-            q: 23,
-            opt: None,
+            u1: 23,
+            u2: 42,
         };
         // does ser work?
-        let data = mything.to_binary_slice();
+        let data = item.to_binary_slice();
         assert!(data.len() > 0);
 
         // now deser:
-        let mything2 = Thing::from_binary_slice(data).expect("Expected deser to work");
-        assert_eq!(mything2.s, mything.s);
-        assert_eq!(mything2.q, mything.q);
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2.u1, item2.u1);
+        assert_eq!(item2.s, item2.s);
+        assert_eq!(item2.u2, item2.u2);
     }
 }
