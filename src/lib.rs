@@ -49,6 +49,7 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
         }
 
         impl ToBinarySlice for String {
+            #[inline(always)]
             fn add_to_slice(&self, data: &mut Vec<u8>) {
                 let self_bytes = self.as_bytes();
                 let len_u32 = self_bytes.len() as u32;
@@ -59,6 +60,7 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
         }
 
         impl ToBinarySlice for u32 {
+            #[inline(always)]
             fn add_to_slice(&self, data: &mut Vec<u8>) {
                 let self_bytes = self.to_be_bytes();
                 let len_u32 = self_bytes.len() as u32;
@@ -69,6 +71,7 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
         }
 
         impl FromBinarySlice for u32 {
+            #[inline(always)]
             fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
                 // u32's len component will always be 4.. we can skip it
                 *index += 4;
@@ -81,6 +84,7 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
         }
 
         impl FromBinarySlice for String {
+            #[inline(always)]
             fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
                 let first_4 = data.get(*index..*index + 4)?;
                 *index += 4;
@@ -94,6 +98,7 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
         }
 
         impl<T: ToBinarySlice> ToBinarySlice for Option<T> {
+            #[inline(always)]
             fn add_to_slice(&self, data: &mut Vec<u8>) {
                 match self {
                     Some(t) => {
@@ -107,6 +112,7 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
         }
         
         impl<T: FromBinarySlice> FromBinarySlice for Option<T> {
+            #[inline(always)]
             fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self>where Self:Sized {
                 let first_4 = data.get(*index..*index + 4)?;
                 let first_4_u32_bytes = [first_4[0], first_4[1], first_4[2], first_4[3]];
@@ -120,6 +126,7 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
         }
 
         impl<T: ToBinarySlice> ToBinarySlice for Vec<T> {
+            #[inline(always)]
             fn add_to_slice(&self, data: &mut Vec<u8>) {
                 let len_u32 = data.len() as u32;
                 let len_be_bytes = len_u32.to_be_bytes();
@@ -130,6 +137,7 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
             }
         }
         impl<T: FromBinarySlice> FromBinarySlice for Vec<T> {
+            #[inline(always)]
             fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self>where Self:Sized {
                 let first_4 = data.get(*index..*index + 4)?;
                 let first_4_u32_bytes = [first_4[0], first_4[1], first_4[2], first_4[3]];
@@ -219,6 +227,7 @@ fn wasm_type_gen_struct_named_fields(
 
     (add_includes, quote! {
         impl ToBinarySlice for #struct_name {
+            #[inline(always)]
             fn add_to_slice(&self, data: &mut Vec<u8>) {
                 let mut self_data = vec![];
                 #(#add_to_slice_fields)*
@@ -231,6 +240,7 @@ fn wasm_type_gen_struct_named_fields(
 
         impl FromBinarySlice for #struct_name {
             #[allow(unused_assignments)]
+            #[inline(always)]
             fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
                 // to skip the size of Self
                 *index += 4;
@@ -393,6 +403,7 @@ fn wasm_type_gen_enum_named_fields(
     }
     (add_includes, quote! {
         impl ToBinarySlice for #name {
+            #[inline(always)]
             fn add_to_slice(&self, data: &mut Vec<u8>) {
                 let mut self_data: Vec<u8> = vec![];
                 match self {
@@ -407,6 +418,7 @@ fn wasm_type_gen_enum_named_fields(
 
         impl FromBinarySlice for #name {
             #[allow(unused_assignments)]
+            #[inline(always)]
             fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
                 // skip self len
                 *index += 4;
@@ -444,6 +456,7 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let transfer_impl_block2 = quote! {
         impl #name {
             #[allow(dead_code)]
+            #[inline(always)]
             pub fn to_binary_slice(&self) -> Vec<u8> {
                 let mut out = vec![];
                 self.add_to_slice(&mut out);
@@ -451,6 +464,7 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
             }
             #[allow(dead_code)]
             #[allow(unused_assignments)]
+            #[inline(always)]
             pub fn from_binary_slice(data: Vec<u8>) -> Option<Self> {
                 let mut index = 0;
                 // let first_4 = data.get(index..index + 4)?;
