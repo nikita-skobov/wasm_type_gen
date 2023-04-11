@@ -351,6 +351,21 @@ fn wasm_type_gen_enum_named_fields(
     });
 
     let mut add_includes = vec![];
+    for variant in variants {
+        match &variant.fields {
+            Fields::Unit => {}
+            Fields::Named(fields) => {
+                for field in &fields.named {
+                    set_include_wasm(&mut add_includes, &field.ty);
+                }
+            }
+            Fields::Unnamed(fields) => {
+                for field in &fields.unnamed {
+                    set_include_wasm(&mut add_includes, &field.ty);
+                }
+            }
+        }
+    }
     (add_includes, quote! {
         impl ToBinarySlice for #name {
             fn add_to_slice(&self, data: &mut Vec<u8>) {
