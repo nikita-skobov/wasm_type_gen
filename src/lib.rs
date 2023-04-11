@@ -118,6 +118,30 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
                 Some(Some(t_thing))
             }
         }
+
+        impl<T: ToBinarySlice> ToBinarySlice for Vec<T> {
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let len_u32 = data.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                for obj in self.iter() {
+                    obj.add_to_slice(data);
+                }
+            }
+        }
+        impl<T: FromBinarySlice> FromBinarySlice for Vec<T> {
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self>where Self:Sized {
+                let first_4 = data.get(*index..*index + 4)?;
+                let first_4_u32_bytes = [first_4[0], first_4[1], first_4[2], first_4[3]];
+                let len = u32::from_be_bytes(first_4_u32_bytes) as usize;
+                *index += 4;
+                let mut out = Vec::with_capacity(len);
+                for i in 0..len {
+                    out.push(T::get_from_slice(index, data)?);
+                }
+                Some(out)
+            }
+        }
     };
 
     let trait_stuff_str = trait_stuff.to_string();
@@ -137,7 +161,7 @@ fn set_include_wasm(add_includes: &mut Vec<proc_macro2::TokenStream>, ty: &Type)
         match type_path.as_str() {
             "u32" => {},
             "String" => {},
-            "Option" => {
+            "Option" | "Vec" => {
                 if let Some(last_seg) = &p.path.segments.last() {
                     if let syn::PathArguments::AngleBracketed(ab) = &last_seg.arguments {
                         if let Some(syn::GenericArgument::Type(p)) = ab.args.first() {
