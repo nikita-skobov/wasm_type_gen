@@ -483,7 +483,6 @@ mod tests {
         // does ser work?
         let data = item.to_binary_slice();
         assert!(data.len() > 0);
-        println!("{:?}", data);
         // now deser:
         let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
         assert_eq!(item2, item2);
@@ -515,9 +514,37 @@ mod tests {
         // does ser work?
         let data = item.to_binary_slice();
         assert!(data.len() > 0);
-        println!("{:?}", data);
         // now deser:
         let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
         assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_vec() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub data: Vec<Abc2>,
+        }
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub enum Abc2 {
+            Child(u32),
+            Nothing,
+        }
+
+        let item = Abc {
+            data: vec![
+                Abc2::Child(1),
+                Abc2::Nothing,
+                Abc2::Child(2),
+            ],
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+        // ensure that generated code for wasm includes type def of Abc2
+        assert!(Abc::include_in_rs_wasm().contains("pub enum Abc2"));
     }
 }
