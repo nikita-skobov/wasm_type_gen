@@ -90,6 +90,22 @@ fn main() {
             }
         }
     }).unwrap();
+    linker.func_wrap("env", "set_entrypoint_data", |mut caller: Caller<'_, _>, ptr: u32, len: u32| {
+        let ptr = ptr as usize;
+        let len = len as usize;
+        let output = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+            let mem_data = mem.data_mut(&mut caller);
+            if let Some(data) = mem_data.get_mut(ptr..ptr+len) {
+                Some(data.to_vec())
+            } else {
+                None
+            }
+        } else { None };
+        if let Some(out) = output {
+            let host_data: &mut Vec<u8> = caller.data_mut();
+            *host_data = out;
+        }
+    }).unwrap();
 
     // instantiation, setting our main data entrypoint, calling wasm entry
     let pass_this = Thing {
@@ -100,14 +116,19 @@ fn main() {
     let mut store: Store<_> = Store::new(&engine, pass_this.to_binary_slice());
     let instance = linker.instantiate(&mut store, &module).unwrap();
     let func = instance.get_typed_func::<(), u32>(&mut store, "wasm_entrypoint").unwrap();
-    let res = func.call(&mut store, ());
-    println!("{:?}", res);
+    let res = func.call(&mut store, ()).unwrap();
+    if res != 0 {
+        panic!("Failed to deserialize data from host to wasm guest");
+    }
+    let mything_data = store.into_data();
+    let mything = Thing::from_binary_slice(mything_data).unwrap();
+    println!("{:?}", mything);
 }
 
 
 generate_parsing_traits!();
 
-#[derive(WasmTypeGen)]
+#[derive(WasmTypeGen, Debug)]
 pub struct Thing {
     pub s: String,
     pub q: u32,

@@ -16,6 +16,7 @@ pub fn generate_wasm_entrypoint(item: proc_macro::TokenStream) -> proc_macro::To
     extern \"C\" {{
         fn get_entrypoint_alloc_size() -> u32;
         fn get_entrypoint_data(ptr: *const u8, len: u32);
+        fn set_entrypoint_data(ptr: *const u8, len: u32);
     }}
 
     #[no_mangle]
@@ -33,6 +34,12 @@ pub fn generate_wasm_entrypoint(item: proc_macro::TokenStream) -> proc_macro::To
             }}
         }};
         let _ = wasm_main(&mut input_obj);
+        unsafe {{
+            let out_data = input_obj.to_binary_slice();
+            let ptr = out_data.as_ptr();
+            let len = out_data.len();
+            set_entrypoint_data(ptr, len as _);
+        }}
         0
     }}
     "#);
