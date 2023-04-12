@@ -167,6 +167,24 @@ mod tests {
     }
 
     #[test]
+    fn ser_deser_works_unnamed_struct() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc(u32, Vec<Option<Vec<u32>>>, u32);
+
+        let item = Abc(0, vec![
+            None, Some(vec![1, 2, 3]),
+            Some(vec![]), Some(vec![4,5,6]),
+            None, None, None
+        ], 2);
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
     fn ser_deser_works_options() {
         #[derive(WasmTypeGen, PartialEq, Debug)]
         pub struct Abc {
