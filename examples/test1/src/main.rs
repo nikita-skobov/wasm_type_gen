@@ -71,7 +71,7 @@ fn main() {
     let engine = Engine::default();
     let module = Module::from_file(&engine, wasm_path).expect("failed to read wasm file");
     let mut linker: Linker<_> = Linker::new(&engine);
-    linker.func_wrap("env", "get_entrypoint_alloc_size", |mut caller: Caller<'_, _>| -> u32 {
+    linker.func_wrap("env", "get_entrypoint_alloc_size", |caller: Caller<'_, _>| -> u32 {
         let data: &Vec<u8> = caller.data();
         data.len() as u32
     }).unwrap();

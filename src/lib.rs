@@ -1,10 +1,9 @@
 use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput, Data, Fields, Type, FieldsNamed, DataEnum};
-use quote::{quote, ToTokens, format_ident};
+use quote::{quote, format_ident};
 
 #[proc_macro]
 pub fn generate_wasm_entrypoint(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    println!("{:#?}", item);
     let token = item.into_iter().next().expect("Must provide a type to generate_wasm_entrypoint!(YourType)");
     let id_str = match token {
         proc_macro::TokenTree::Ident(id) => id.to_string(),
