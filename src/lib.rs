@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use syn::{parse_macro_input, DeriveInput, Data, Fields, Type, FieldsNamed, DataEnum};
+use syn::{parse_macro_input, DeriveInput, Data, Fields, Type, FieldsNamed, DataEnum, FieldsUnnamed};
 use quote::{quote, format_ident};
 
 #[proc_macro]
@@ -434,6 +434,73 @@ fn wasm_type_gen_enum_named_fields(
     })
 }
 
+/// Returns a tuple of:
+/// - Vec of token streams, each one is an 'add_include' to the generated include_in_rs_wasm() function
+/// - and the impl block as 1 TokenStream
+fn wasm_type_gen_struct_unnamed_fields(
+    struct_name: &proc_macro2::Ident,
+    fields: &FieldsUnnamed,
+) -> (Vec<proc_macro2::TokenStream>, proc_macro2::TokenStream) {
+    let fields = &fields.unnamed;
+    let add_to_slice_fields = fields.iter().enumerate().map(|(index, _)| {
+        let index = syn::Index::from(index);
+        quote! {
+            self.#index.add_to_slice(&mut self_data);
+        }
+    });
+
+    let get_from_slice_fields = fields.iter().enumerate().map(|(index, field)| {
+        let ty = &field.ty;
+        let index = syn::Index::from(index);
+        let varname = format_ident!("a{}", index);
+        quote! {
+            let #varname: #ty = <_>::get_from_slice(index, data)?;
+        }
+    });
+
+    let field_names = fields.iter().enumerate().map(|(index, _)| {
+        let index = syn::Index::from(index);
+        let varname = format_ident!("a{}", index);
+        quote! {
+            #varname,
+        }
+    });
+
+    let mut add_includes = vec![];
+    for field in fields.iter() {
+        let ty = &field.ty;
+        set_include_wasm(&mut add_includes, ty);
+    }
+
+    (add_includes, quote! {
+        impl ToBinarySlice for #struct_name {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let mut self_data = vec![];
+                #(#add_to_slice_fields)*
+                let self_data_len = self_data.len() as u32;
+                let self_data_bytes = self_data_len.to_be_bytes();
+                data.extend(self_data_bytes);
+                data.extend(self_data);
+            }
+        }
+
+        impl FromBinarySlice for #struct_name {
+            #[allow(unused_assignments)]
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // to skip the size of Self
+                *index += 4;
+                #(#get_from_slice_fields)*
+                Some(Self(
+                    #(#field_names)*
+                ))
+            }
+        }
+    })
+}
+
+
 #[proc_macro_derive(WasmTypeGen)]
 pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let item_cloned = item.clone();
@@ -445,7 +512,8 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let (add_includes, transfer_impl_block) = match thing.data {
         Data::Struct(ref data) => match data.fields {
             Fields::Named(ref fields) => wasm_type_gen_struct_named_fields(&name, fields),
-            _ => unimplemented!("WasmTypeGen not implemented for non-named struct fields"),
+            Fields::Unnamed(ref fields) => wasm_type_gen_struct_unnamed_fields(&name, fields),
+            Fields::Unit => unimplemented!("WasmTypeGen not implemented for Unit structs"),
         },
         Data::Enum(ref data) => {
             wasm_type_gen_enum_named_fields(&name, data)
