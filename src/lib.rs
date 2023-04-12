@@ -127,7 +127,7 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
         impl<T: ToBinarySlice> ToBinarySlice for Vec<T> {
             #[inline(always)]
             fn add_to_slice(&self, data: &mut Vec<u8>) {
-                let len_u32 = data.len() as u32;
+                let len_u32 = self.len() as u32;
                 let len_be_bytes = len_u32.to_be_bytes();
                 data.extend(len_be_bytes);
                 for obj in self.iter() {
