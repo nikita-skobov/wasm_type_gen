@@ -518,7 +518,7 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
         Data::Enum(ref data) => {
             wasm_type_gen_enum_named_fields(&name, data)
         },
-        _ => unimplemented!(),
+        Data::Union(_) => unimplemented!("WasmTypeGen not implemented for Unions"),
     };
     let transfer_impl_block2 = quote! {
         impl #name {
