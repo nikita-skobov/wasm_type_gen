@@ -58,6 +58,10 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
             fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> where Self: Sized;
         }
 
+        pub trait WasmIncludeString {
+            fn include_in_rs_wasm() -> String;
+        }
+
         impl ToBinarySlice for String {
             #[inline(always)]
             fn add_to_slice(&self, data: &mut Vec<u8>) {
@@ -563,8 +567,8 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
         #transfer_impl_block
         #transfer_impl_block2
 
-        impl #name {
-            pub fn include_in_rs_wasm() -> String {
+        impl WasmIncludeString for #name {
+            fn include_in_rs_wasm() -> String {
                 let strings = [
                     #structdef,
                     #transfer_impl_block_str,
