@@ -55,24 +55,38 @@ fn compile_to_wasm(s: &str, add_to_code: Option<String>) -> Result<String, Strin
     Ok(module_path)
 }
 
-fn main() {
-    let path_to_file = std::env::args().nth(1).expect("Must provide path to .rs file to be compiled to wasm");
-
+fn compile_and_run_wasm<T: FromBinarySlice + ToBinarySlice + WasmIncludeString>(
+    path_to_rs_wasm_file: &str,
+    data_to_pass: &T,
+) -> Result<T, String> {
     // code generation / compilation
     let mut add_to_code = Thing::include_in_rs_wasm();
     add_to_code.push_str(generate_wasm_entrypoint!(Thing));
     add_to_code.push_str(PARSING_TRAIT_STR);
-    let wasm_path = match compile_to_wasm(&path_to_file, Some(add_to_code)) {
-        Err(e) => panic!("Failed to compile to wasm {e}"),
-        Ok(o) => o,
-    };
-    let mut wasm_f = std::fs::File::open(wasm_path).expect("Failed to open wasm file");
+    let wasm_path = compile_to_wasm(path_to_rs_wasm_file, Some(add_to_code))?;
+    let mut wasm_f = std::fs::File::open(wasm_path).map_err(|e| format!("Failed to open wasm file {:?}", e))?;
     let mut wasm_data = vec![];
-    wasm_f.read_to_end(&mut wasm_data).expect("Failed to read wasm file");
+    wasm_f.read_to_end(&mut wasm_data).map_err(|e| format!("Failed to read wasm file {:?}", e))?;
 
+    let mut serialized_data = vec![];
+    data_to_pass.add_to_slice(&mut serialized_data);
+
+    let serialized_data = run_wasm(&wasm_data, serialized_data)?;
+    let mut index = 0;
+    let out = T::get_from_slice(&mut index, &serialized_data);
+    match out {
+        Some(o) => Ok(o),
+        None => Err(format!("Failed to deserialize output from wasm guest")),
+    }
+}
+
+fn run_wasm(
+    wasm_data: &[u8],
+    serialized_data: Vec<u8>,
+) -> Result<Vec<u8>, String> {
     // linking (giving wasm guest access to host functions)
     let engine = Engine::default();
-    let module = Module::from_binary(&engine, &wasm_data).expect("failed to read wasm file");
+    let module = Module::from_binary(&engine, &wasm_data).map_err(|e| format!("failed to load wasm module {:?}", e))?;
     let mut linker: Linker<_> = Linker::new(&engine);
     linker.func_wrap("env", "get_entrypoint_alloc_size", |caller: Caller<'_, _>| -> u32 {
         let data: &Vec<u8> = caller.data();
@@ -111,21 +125,27 @@ fn main() {
     }).unwrap();
 
     // instantiation, setting our main data entrypoint, calling wasm entry
+    let mut store: Store<_> = Store::new(&engine, serialized_data);
+    let instance = linker.instantiate(&mut store, &module).unwrap();
+    let func = instance.get_typed_func::<(), u32>(&mut store, "wasm_entrypoint").unwrap();
+    let res = func.call(&mut store, ()).unwrap();
+    if res != 0 {
+        return Err("Failed to deserialize data from host to wasm guest".into());
+    }
+    let out_data = store.into_data();
+    Ok(out_data)
+}
+
+fn main() {
+    let path_to_file = std::env::args().nth(1).expect("Must provide path to .rs file to be compiled to wasm");
+
     let pass_this = Thing {
         s: "hellofromrusttowasm!".into(),
         q: 101,
         opt: Some(2),
     };
-    let mut store: Store<_> = Store::new(&engine, pass_this.to_binary_slice());
-    let instance = linker.instantiate(&mut store, &module).unwrap();
-    let func = instance.get_typed_func::<(), u32>(&mut store, "wasm_entrypoint").unwrap();
-    let res = func.call(&mut store, ()).unwrap();
-    if res != 0 {
-        panic!("Failed to deserialize data from host to wasm guest");
-    }
-    let mything_data = store.into_data();
-    let mything = Thing::from_binary_slice(mything_data).unwrap();
-    println!("{:?}", mything);
+    let out_data = compile_and_run_wasm(&path_to_file, &pass_this).unwrap();
+    println!("{:?}", out_data);
 }
 
 
