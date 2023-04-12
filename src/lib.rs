@@ -20,16 +20,20 @@ pub fn generate_wasm_entrypoint(item: proc_macro::TokenStream) -> proc_macro::To
 
     #[no_mangle]
     pub extern fn wasm_entrypoint() -> u32 {{
-        let input_obj = unsafe {{
+        let mut input_obj = unsafe {{
             let len = get_entrypoint_alloc_size() as usize;
             let mut data: Vec<u8> = Vec::with_capacity(len);
             data.set_len(len);
             let ptr = data.as_ptr();
             let len = data.len();
             get_entrypoint_data(ptr, len as _);
-            {id_str}::from_binary_slice(data).unwrap()
+            match {id_str}::from_binary_slice(data) {{
+                Some(s) => s,
+                None => return 1,
+            }}
         }};
-        wasm_main(input_obj)
+        let _ = wasm_main(&mut input_obj);
+        0
     }}
     "#);
 
