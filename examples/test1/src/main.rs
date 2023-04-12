@@ -66,10 +66,13 @@ fn main() {
         Err(e) => panic!("Failed to compile to wasm {e}"),
         Ok(o) => o,
     };
+    let mut wasm_f = std::fs::File::open(wasm_path).expect("Failed to open wasm file");
+    let mut wasm_data = vec![];
+    wasm_f.read_to_end(&mut wasm_data).expect("Failed to read wasm file");
 
     // linking (giving wasm guest access to host functions)
     let engine = Engine::default();
-    let module = Module::from_file(&engine, wasm_path).expect("failed to read wasm file");
+    let module = Module::from_binary(&engine, &wasm_data).expect("failed to read wasm file");
     let mut linker: Linker<_> = Linker::new(&engine);
     linker.func_wrap("env", "get_entrypoint_alloc_size", |caller: Caller<'_, _>| -> u32 {
         let data: &Vec<u8> = caller.data();
