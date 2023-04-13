@@ -524,7 +524,7 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
     let expanded = quote! {
         #trait_stuff
 
-        const WASM_PARSING_TRAIT_STR: &'static str = #trait_stuff_str;
+        pub const WASM_PARSING_TRAIT_STR: &'static str = #trait_stuff_str;
     };
 
     TokenStream::from(expanded)
