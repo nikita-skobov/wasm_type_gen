@@ -3,3 +3,12 @@
 examples/*/target
 examples/*/wasmout
 examples/*/*.wasm
+wasm_type_gen/target
+wasm_type_gen/examples/*/target
+wasm_type_gen/examples/*/wasmout
+wasm_type_gen/examples/*/*.wasm
+wasm_type_gen_derive/target
+wasm_type_gen_derive/examples/*/target
+wasm_type_gen_derive/examples/*/wasmout
+wasm_type_gen_derive/examples/*/*.wasm
+
