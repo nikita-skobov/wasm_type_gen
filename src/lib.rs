@@ -580,9 +580,7 @@ fn set_include_wasm(add_includes: &mut Vec<proc_macro2::TokenStream>, ty: &Type)
             let type_path = p.path.segments.last()
                 .map(|f| f.ident.to_string()).unwrap_or("u32".to_string());
             match type_path.as_str() {
-                "u32" => {},
-                "String" => {},
-                "i8" | "u8" | "i16" | "u16" | "i32" | "i64" | "u64" | "i128" | "u128" | "isize" | "usize" | "f32" | "f64" | "bool" | "char" => {},
+                "String" | "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "i128" | "u128" | "isize" | "usize" | "f32" | "f64" | "bool" | "char" => {},
                 "Option" | "Vec" => {
                     if let Some(last_seg) = &p.path.segments.last() {
                         if let syn::PathArguments::AngleBracketed(ab) = &last_seg.arguments {
