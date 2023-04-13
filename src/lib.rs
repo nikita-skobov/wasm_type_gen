@@ -164,6 +164,404 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
                 Some(out)
             }
         }
+
+        impl FromBinarySlice for i8 {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 1.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+1)?;
+                let out = Some(i8::from_be_bytes([next_data[0]]));
+                // skip 1 again because we consumed the data
+                *index += 1;
+                out
+            }
+        }
+        impl ToBinarySlice for i8 {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = self.to_be_bytes();
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+
+        impl FromBinarySlice for u8 {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 1.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+1)?;
+                let out = Some(u8::from_be_bytes([next_data[0]]));
+                // skip 1 again because we consumed the data
+                *index += 1;
+                out
+            }
+        }
+        impl ToBinarySlice for u8 {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = self.to_be_bytes();
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+
+        impl FromBinarySlice for i16 {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 2.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+2)?;
+                let out = Some(i16::from_be_bytes([next_data[0], next_data[1]]));
+                // skip 2 again because we consumed the data
+                *index += 2;
+                out
+            }
+        }
+        impl ToBinarySlice for i16 {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = self.to_be_bytes();
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+
+        impl FromBinarySlice for u16 {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 2.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+2)?;
+                let out = Some(u16::from_be_bytes([next_data[0], next_data[1]]));
+                // skip 2 again because we consumed the data
+                *index += 2;
+                out
+            }
+        }
+        impl ToBinarySlice for u16 {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = self.to_be_bytes();
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+
+        impl ToBinarySlice for i32 {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = self.to_be_bytes();
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+        impl FromBinarySlice for i32 {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 4.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+4)?;
+                let out = Some(i32::from_be_bytes([next_data[0], next_data[1], next_data[2], next_data[3]]));
+                // skip 4 again because we consumed the i32
+                *index += 4;
+                out
+            }
+        }
+
+        impl ToBinarySlice for i64 {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = self.to_be_bytes();
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+        impl FromBinarySlice for i64 {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 8.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+8)?;
+                let out = Some(i64::from_be_bytes([next_data[0], next_data[1], next_data[2], next_data[3], next_data[4], next_data[5], next_data[6], next_data[7]]));
+                // skip 8 again because we consumed the data
+                *index += 8;
+                out
+            }
+        }
+
+        impl ToBinarySlice for u64 {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = self.to_be_bytes();
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+        impl FromBinarySlice for u64 {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 8.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+8)?;
+                let out = Some(u64::from_be_bytes([next_data[0], next_data[1], next_data[2], next_data[3], next_data[4], next_data[5], next_data[6], next_data[7]]));
+                // skip 8 again because we consumed the data
+                *index += 8;
+                out
+            }
+        }
+
+        impl ToBinarySlice for i128 {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = self.to_be_bytes();
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+        impl FromBinarySlice for i128 {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 16.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+16)?;
+                let out = Some(i128::from_be_bytes([
+                    next_data[0], next_data[1], next_data[2], next_data[3], next_data[4], next_data[5], next_data[6], next_data[7],
+                    next_data[8], next_data[9], next_data[10], next_data[11], next_data[12], next_data[13], next_data[14], next_data[15]
+                ]));
+                // skip 16 again because we consumed the data
+                *index += 16;
+                out
+            }
+        }
+
+        impl ToBinarySlice for u128 {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = self.to_be_bytes();
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+        impl FromBinarySlice for u128 {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 16.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+16)?;
+                let out = Some(u128::from_be_bytes([
+                    next_data[0], next_data[1], next_data[2], next_data[3], next_data[4], next_data[5], next_data[6], next_data[7],
+                    next_data[8], next_data[9], next_data[10], next_data[11], next_data[12], next_data[13], next_data[14], next_data[15]
+                ]));
+                // skip 16 again because we consumed the data
+                *index += 16;
+                out
+            }
+        }
+
+        impl ToBinarySlice for isize {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = (*self as i64).to_be_bytes();
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+        impl FromBinarySlice for isize {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 8.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+8)?;
+                let out_i64 = i64::from_be_bytes([
+                    next_data[0], next_data[1], next_data[2], next_data[3], next_data[4], next_data[5], next_data[6], next_data[7],
+                ]);
+                let out = Some(
+                    <isize as core::convert::TryFrom<_>>::try_from(out_i64).ok()?
+                );
+                // skip 8 again because we consumed the data
+                *index += 8;
+                out
+            }
+        }
+
+        impl ToBinarySlice for usize {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = (*self as u64).to_be_bytes();
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+        impl FromBinarySlice for usize {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 8.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+8)?;
+                let out_u64 = u64::from_be_bytes([
+                    next_data[0], next_data[1], next_data[2], next_data[3], next_data[4], next_data[5], next_data[6], next_data[7],
+                ]);
+                let out = Some(
+                    <usize as core::convert::TryFrom<_>>::try_from(out_u64).ok()?
+                );
+                // skip 8 again because we consumed the data
+                *index += 8;
+                out
+            }
+        }
+
+        impl ToBinarySlice for f32 {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = self.to_be_bytes();
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+        impl FromBinarySlice for f32 {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 4.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+4)?;
+                let out = Some(f32::from_be_bytes([
+                    next_data[0], next_data[1], next_data[2], next_data[3]
+                ]));
+                // skip 4 again because we consumed the data
+                *index += 4;
+                out
+            }
+        }
+
+        impl ToBinarySlice for f64 {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = self.to_be_bytes();
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+        impl FromBinarySlice for f64 {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 8.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+8)?;
+                let out = Some(f64::from_be_bytes([
+                    next_data[0], next_data[1], next_data[2], next_data[3], next_data[4], next_data[5], next_data[6], next_data[7]
+                ]));
+                // skip 8 again because we consumed the data
+                *index += 8;
+                out
+            }
+        }
+
+        impl ToBinarySlice for bool {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = [if *self { 1 } else { 0 }];
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+        impl FromBinarySlice for bool {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 1.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+1)?;
+                let out = Some(if next_data[0] == 0 { false } else { true });
+                // skip 1 again because we consumed the data
+                *index += 1;
+                out
+            }
+        }
+
+        impl ToBinarySlice for char {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let self_bytes = (*self as u32).to_be_bytes();
+                let len_u32 = self_bytes.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                data.extend(self_bytes);
+            }
+        }
+        impl FromBinarySlice for char {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self> {
+                // len component will always be 4.. we can skip it
+                *index += 4;
+                let next_data = data.get(*index..*index+4)?;
+                let out_u32 = u32::from_be_bytes([
+                    next_data[0], next_data[1], next_data[2], next_data[3]
+                ]);
+                let out = Some(char::from_u32(out_u32)?);
+                // skip 4 again because we consumed the data
+                *index += 4;
+                out
+            }
+        }
+
+        impl<T: ToBinarySlice, const N: usize> ToBinarySlice for [T; N] {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let len_u32 = self.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                for obj in self.iter() {
+                    obj.add_to_slice(data);
+                }
+            }
+        }
+        impl<T: FromBinarySlice + Copy, const N: usize> FromBinarySlice for [T; N] {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self>where Self:Sized {
+                let first_4 = data.get(*index..*index + 4)?;
+                let first_4_u32_bytes = [first_4[0], first_4[1], first_4[2], first_4[3]];
+                let len = u32::from_be_bytes(first_4_u32_bytes) as usize;
+                *index += 4;
+                if len != N {
+                    return None;
+                }
+                let first = T::get_from_slice(index, data)?;
+                let mut out = [first; N];
+                for i in 1..len {
+                    out[i] = T::get_from_slice(index, data)?;
+                }
+                Some(out)
+            }
+        }
     };
 
     let trait_stuff_str = trait_stuff.to_string();
@@ -177,29 +575,49 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
 }
 
 fn set_include_wasm(add_includes: &mut Vec<proc_macro2::TokenStream>, ty: &Type) {
-    if let syn::Type::Path(p) = ty {
-        let type_path = p.path.segments.last()
-            .map(|f| f.ident.to_string()).unwrap_or("u32".to_string());
-        match type_path.as_str() {
-            "u32" => {},
-            "String" => {},
-            "Option" | "Vec" => {
-                if let Some(last_seg) = &p.path.segments.last() {
-                    if let syn::PathArguments::AngleBracketed(ab) = &last_seg.arguments {
-                        if let Some(syn::GenericArgument::Type(p)) = ab.args.first() {
-                            set_include_wasm(add_includes, p);
+    match ty {
+        Type::Path(p) => {
+            let type_path = p.path.segments.last()
+                .map(|f| f.ident.to_string()).unwrap_or("u32".to_string());
+            match type_path.as_str() {
+                "u32" => {},
+                "String" => {},
+                "i8" | "u8" | "i16" | "u16" | "i32" | "i64" | "u64" | "i128" | "u128" | "isize" | "usize" | "f32" | "f64" | "bool" | "char" => {},
+                "Option" | "Vec" => {
+                    if let Some(last_seg) = &p.path.segments.last() {
+                        if let syn::PathArguments::AngleBracketed(ab) = &last_seg.arguments {
+                            if let Some(syn::GenericArgument::Type(p)) = ab.args.first() {
+                                set_include_wasm(add_includes, p);
+                            }
                         }
                     }
+                },
+                // this is a non-standard type, so we
+                // want to add this to the string that should be exported to the wasm file.
+                _ => {
+                    add_includes.push(quote! {
+                        #ty::include_in_rs_wasm(),
+                    });
                 }
-            },
-            // this is a non-standard type, so we
-            // want to add this to the string that should be exported to the wasm file.
-            _ => {
-                add_includes.push(quote! {
-                    #ty::include_in_rs_wasm(),
-                });
             }
         }
+        Type::Array(a) => {
+            set_include_wasm(add_includes, &a.elem);
+        }
+        // Type::BareFn(_) => todo!(),
+        // Type::Group(_) => todo!(),
+        // Type::ImplTrait(_) => todo!(),
+        // Type::Infer(_) => todo!(),
+        // Type::Macro(_) => todo!(),
+        // Type::Never(_) => todo!(),
+        // Type::Paren(_) => todo!(),
+        // Type::Ptr(_) => todo!(),
+        // Type::Reference(_) => todo!(),
+        // Type::Slice(_) => todo!(),
+        // Type::TraitObject(_) => todo!(),
+        // Type::Tuple(_) => todo!(),
+        // Type::Verbatim(_) => todo!(),
+        _ => {},
     }
 }
 

@@ -373,4 +373,314 @@ mod tests {
         // ensure that generated code for wasm includes type def of Abc2
         assert!(Abc::include_in_rs_wasm().contains("pub enum Abc2"));
     }
+
+    #[test]
+    fn works_for_i8() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: i8,
+            pub d2: i8,
+        }
+        let item = Abc {
+            d1: 127,
+            d2: -128,
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_u8() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: u8,
+            pub d2: u8,
+        }
+        let item = Abc {
+            d1: 0,
+            d2: 255,
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_i16() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: i16,
+            pub d2: i16,
+        }
+        let item = Abc {
+            d1: i16::MAX,
+            d2: i16::MIN,
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_u16() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: u16,
+            pub d2: u16,
+        }
+        let item = Abc {
+            d1: u16::MAX,
+            d2: u16::MIN,
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_i32() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: i32,
+            pub d2: i32,
+        }
+        let item = Abc {
+            d1: i32::MAX,
+            d2: i32::MIN,
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_i64() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: i64,
+            pub d2: i64,
+        }
+        let item = Abc {
+            d1: i64::MAX,
+            d2: i64::MIN,
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_u64() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: u64,
+            pub d2: u64,
+        }
+        let item = Abc {
+            d1: u64::MAX,
+            d2: u64::MIN,
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_i128() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: i128,
+            pub d2: i128,
+        }
+        let item = Abc {
+            d1: i128::MAX,
+            d2: i128::MIN,
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_u128() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: u128,
+            pub d2: u128,
+        }
+        let item = Abc {
+            d1: u128::MAX,
+            d2: u128::MIN,
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_isize() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: isize,
+            pub d2: isize,
+        }
+        let item = Abc {
+            d1: isize::MAX,
+            d2: isize::MIN,
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_usize() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: usize,
+            pub d2: usize,
+        }
+        let item = Abc {
+            d1: usize::MAX,
+            d2: usize::MIN,
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_f32() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: f32,
+            pub d2: f32,
+        }
+        let item = Abc {
+            d1: f32::MAX,
+            d2: f32::MIN,
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_f64() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: f64,
+            pub d2: f64,
+        }
+        let item = Abc {
+            d1: f64::MAX,
+            d2: f64::MIN,
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_bool() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: bool,
+            pub d2: bool,
+        }
+        let item = Abc {
+            d1: false,
+            d2: true,
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_char() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: char,
+            pub d2: char,
+        }
+        let item = Abc {
+            d1: '😻',
+            d2: 'a',
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+    }
+
+    #[test]
+    fn works_for_array() {
+        #[derive(WasmTypeGen, PartialEq, Debug, Copy, Clone)]
+        pub struct Something {
+            pub a: u32,
+        }
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub d1: [u8; 4],
+            pub d2: [Something; 3],
+        }
+        let item = Abc {
+            d1: [1, 2, 3, 4],
+            d2: [Something { a: 1}, Something { a: 2}, Something { a: 3}],
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+        // ensure that generated code for wasm includes type def of Something
+        assert!(Abc::include_in_rs_wasm().contains("pub struct Something"));
+    }
 }
