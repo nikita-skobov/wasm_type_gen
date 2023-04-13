@@ -3,51 +3,6 @@ use syn::{parse_macro_input, DeriveInput, Data, Fields, Type, FieldsNamed, DataE
 use quote::{quote, format_ident};
 
 #[proc_macro]
-pub fn generate_wasm_entrypoint(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let token = item.into_iter().next().expect("Must provide a type to generate_wasm_entrypoint!(YourType)");
-    let id_str = match token {
-        proc_macro::TokenTree::Ident(id) => id.to_string(),
-        e => {
-            panic!("Expected identifier to generate_wasm_entrypoint!(). Instead found {:?}", e);
-        }
-    };
-
-    let out_str = format!(r#"
-    extern \"C\" {{
-        fn get_entrypoint_alloc_size() -> u32;
-        fn get_entrypoint_data(ptr: *const u8, len: u32);
-        fn set_entrypoint_data(ptr: *const u8, len: u32);
-    }}
-
-    #[no_mangle]
-    pub extern fn wasm_entrypoint() -> u32 {{
-        let mut input_obj = unsafe {{
-            let len = get_entrypoint_alloc_size() as usize;
-            let mut data: Vec<u8> = Vec::with_capacity(len);
-            data.set_len(len);
-            let ptr = data.as_ptr();
-            let len = data.len();
-            get_entrypoint_data(ptr, len as _);
-            match {id_str}::from_binary_slice(data) {{
-                Some(s) => s,
-                None => return 1,
-            }}
-        }};
-        let _ = wasm_main(&mut input_obj);
-        unsafe {{
-            let out_data = input_obj.to_binary_slice();
-            let ptr = out_data.as_ptr();
-            let len = out_data.len();
-            set_entrypoint_data(ptr, len as _);
-        }}
-        0
-    }}
-    "#);
-
-    format!("\"{out_str}\"").parse().unwrap()
-}
-
-#[proc_macro]
 pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let trait_stuff = quote! {
         pub trait ToBinarySlice {
@@ -60,6 +15,7 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
 
         pub trait WasmIncludeString {
             fn include_in_rs_wasm() -> String;
+            fn gen_entrypoint() -> &'static str;
         }
 
         impl ToBinarySlice for String {
@@ -568,7 +524,7 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
     let expanded = quote! {
         #trait_stuff
 
-        const PARSING_TRAIT_STR: &'static str = #trait_stuff_str;
+        const WASM_PARSING_TRAIT_STR: &'static str = #trait_stuff_str;
     };
 
     TokenStream::from(expanded)
@@ -976,8 +932,42 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
             }
         }
     };
+
+    let entrypoint = quote! {
+        extern "C" {
+            fn get_entrypoint_alloc_size() -> u32;
+            fn get_entrypoint_data(ptr: *const u8, len: u32);
+            fn set_entrypoint_data(ptr: *const u8, len: u32);
+        }
+
+        #[no_mangle]
+        pub extern fn wasm_entrypoint() -> u32 {
+            let mut input_obj = unsafe {
+                let len = get_entrypoint_alloc_size() as usize;
+                let mut data: Vec<u8> = Vec::with_capacity(len);
+                data.set_len(len);
+                let ptr = data.as_ptr();
+                let len = data.len();
+                get_entrypoint_data(ptr, len as _);
+                match #name::from_binary_slice(data) {
+                    Some(s) => s,
+                    None => return 1,
+                }
+            };
+            let _ = wasm_main(&mut input_obj);
+            unsafe {
+                let out_data = input_obj.to_binary_slice();
+                let ptr = out_data.as_ptr();
+                let len = out_data.len();
+                set_entrypoint_data(ptr, len as _);
+            }
+            0
+        }
+    };
+
     let transfer_impl_block_str = transfer_impl_block.to_string();
     let transfer_impl_block2_str = transfer_impl_block2.to_string();
+    let entrypoint_str = entrypoint.to_string();
 
     let expanded = quote! {
         #transfer_impl_block
@@ -1000,6 +990,10 @@ pub fn module(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     out.push_str(&extra);
                 }
                 out
+            }
+
+            fn gen_entrypoint() -> &'static str {
+                #entrypoint_str
             }
         }
     };
