@@ -11,4 +11,7 @@ wasm_type_gen_derive/target
 wasm_type_gen_derive/examples/*/target
 wasm_type_gen_derive/examples/*/wasmout
 wasm_type_gen_derive/examples/*/*.wasm
-
+example1/target
+example1/*/target
+example1/*/wasmout
+example1/*/*.wasm
