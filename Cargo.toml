@@ -1,0 +1,5 @@
+[workspace]
+members = [
+    "wasm_type_gen",
+    "wasm_type_gen_derive",
+]
