@@ -37,6 +37,8 @@ pub fn compile_string_to_wasm(wasm_out_name: &str, file_data: &str, add_to_code:
         .arg("-C").arg("debuginfo=0")
         .arg("-C").arg("opt-level=3")
         .arg("-C").arg("debug-assertions=off")
+        .arg("-C").arg("codegen-units=1")
+        .arg("-C").arg("strip=symbols")
         .arg("-C").arg("lto=yes")
         .arg("-o").arg(module_path.as_str())
         .arg("-")
