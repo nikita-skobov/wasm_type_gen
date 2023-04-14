@@ -28,9 +28,59 @@ pub fn compile_string_to_wasm(wasm_out_name: &str, file_data: &str, add_to_code:
         file_data.push_str(&add);
     }
 
-    let module_path = format!("./wasmout/{}.wasm", wasm_out_name);
-    let _ = std::fs::create_dir("./wasmout/");
-    let mut cmd = Command::new("rustc")
+    let reader = std::io::BufReader::new(file_data.as_bytes());
+    let hash = adler32::adler32(reader).unwrap_or(0);
+
+    let wasm_last_name = if wasm_out_name.is_empty() {
+        "last.wasm".to_string()
+    } else {
+        format!("{wasm_out_name}.last.wasm")
+    };
+    let wasm_out_name = if wasm_out_name.is_empty() {
+        format!("{hash}.wasm")
+    } else {
+        format!("{wasm_out_name}.{hash}.wasm")
+    };
+
+    let wasm_output_base = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into());
+    let wasm_out_dir = format!("{}/wasmout", wasm_output_base);
+    // skip compilation if file already exists
+    let module_path = format!("{}/{}", wasm_out_dir, wasm_out_name);
+    let last_module_destination = format!("{}/{}", wasm_out_dir, wasm_last_name);
+    // if we have a previously compiled module, store it so we can return this if the current compilation fails
+    let last_module_path = if std::fs::File::open(&last_module_destination).is_ok() {
+        Some(last_module_destination.clone())
+    } else {
+        None
+    };
+
+    if std::fs::File::open(&module_path).is_ok() {
+        // if we are re-using an already compiled wasm file, then
+        // we should set this to be the last.wasm for the next compilation
+        let _ = std::fs::copy(&module_path, &last_module_destination);
+        return Ok(module_path)
+    }
+
+    // if this is being compiled by rust analyzer, its for a keystroke, and
+    // not something we usually want to fully compile. When the user saves the file, this
+    // env var is (hopefully!) not present, and then we will run a normal compile.
+    // otherwise, if we detect this, AND we have a last.wasm file, then just return that
+    if std::env::var("RUST_ANALYZER_INTERNALS_DO_NOT_USE").is_ok() {
+        if let Some(last) = last_module_path {
+            return Ok(last);
+        }
+    }
+
+    let _ = std::fs::create_dir(wasm_out_dir);
+    // for debugging:
+    // let mut f = std::fs::File::options().create(true).append(true).open("./compilationlog.txt").unwrap();
+    // let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap_or("UNKNOWN".into());
+    // let mut s = format!("COMPILING {pkg_name} {hash}\n---------\n{file_data}\n\n");
+    // for (key, val) in std::env::vars() {
+    //     s.push_str(&format!("{key} = {val}\n"));
+    // }
+    // let _ = f.write_all(s.as_bytes());
+    let cmd_resp = Command::new("rustc")
         // .arg(s) // can compile by pointing to a file. but for out purposes we want to use stdin
         .arg("--target").arg("wasm32-unknown-unknown")
         .arg("--crate-type=cdylib")
@@ -45,20 +95,53 @@ pub fn compile_string_to_wasm(wasm_out_name: &str, file_data: &str, add_to_code:
         .stdin(Stdio::piped())
         .stderr(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn().map_err(|e| format!("Failed to invoke rustc\n{:?}", e))?;
+        .spawn();
+    let mut cmd = match cmd_resp {
+        Ok(c) => c,
+        Err(e) => {
+            if let Some(last) = last_module_path {
+                return Ok(last)
+            }
+            return Err(format!("Failed to invoke rustc {:?}", e));
+        }
+    };
     if let Some(mut stdin) = cmd.stdin.take() {
-        stdin.write_all(file_data.as_bytes())
-            .map_err(|e| format!("Failed to write to stdin for rustc invocation\n{:?}", e))?;
+        if let Err(e) = stdin.write_all(file_data.as_bytes()) {
+            if let Some(last) = last_module_path {
+                return Ok(last)
+            }
+            return Err(format!("Failed to write stdin for rustc invocation\n{:?}", e));
+        }
     }
 
-    let output = cmd.wait().map_err(|e| format!("Failed to run rustc\n{:?}", e))?;
+    let output = match cmd.wait() {
+        Ok(o) => o,
+        Err(e) => {
+            if let Some(last) = last_module_path {
+                return Ok(last)
+            }
+            return Err(format!("Failed to compile to wasm\n{:?}", e));
+        }
+    };
     if !output.success() {
         let mut err = String::new();
         if let Some(mut out) = cmd.stderr.take() {
-            out.read_to_string(&mut err).map_err(|e| format!("Failed to read stderr {:?}", e))?;
+            if let Err(e) = out.read_to_string(&mut err) {
+                if let Some(last) = last_module_path {
+                    return Ok(last)
+                }
+                return Err(format!("Failed to get stderr after failure to compile wasm\n{:?}", e));
+            }
+        }
+        if let Some(last) = last_module_path {
+            return Ok(last)
         }
         return Err(format!("Failed to compile wasm module\n{}", err));
     }
+
+    // copy successful path to the last path
+    let _ = std::fs::copy(&module_path, &last_module_destination);
+
     Ok(module_path)
 }
 

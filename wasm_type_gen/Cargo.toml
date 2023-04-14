@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 wasm_type_gen_derive = { path = "../wasm_type_gen_derive" }
 wasmtime = "7.0.0"
+adler32 = "1.2.0"
