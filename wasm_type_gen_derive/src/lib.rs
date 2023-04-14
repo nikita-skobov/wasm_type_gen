@@ -2,6 +2,54 @@ use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput, Data, Fields, Type, FieldsNamed, DataEnum, FieldsUnnamed};
 use quote::{quote, format_ident};
 
+/// The first variable you provide will be the name of the variable that contains your string
+/// After that, everything gets added to a `#[derive(*)]` that gets created right before the rest of your items.
+/// For this reason, this macro is only intended to be used for struct defs. eg:
+/// ```
+/// #[output_and_stringify(mystructstring, Debug)]
+/// pub struct Hello {
+///    a: u32
+/// }
+/// 
+/// println!("{mystructstring}");
+/// ```
+#[proc_macro_attribute]
+pub fn output_and_stringify(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let attr = proc_macro2::TokenStream::from(attr);
+    let mut attr_iter = attr.into_iter();
+    let id = attr_iter.next().expect("Must provide an attribute to be the name of the variable that the string is output to");
+    let var_to_put_string = if let proc_macro2::TokenTree::Ident(id) = id {
+        id
+    } else {
+        panic!("output_and_stringify received attribute that is not a single identifier");
+    };
+
+    let item = proc_macro2::TokenStream::from(item);
+    let item_str = item.to_string();
+
+    let mut in_derive_str = "".to_string();
+    for next in attr_iter {
+        in_derive_str.push_str(&next.to_string());
+    }
+    if in_derive_str.starts_with(",") {
+        in_derive_str.remove(0);
+    }
+
+    let derive_part: proc_macro2::TokenStream = if in_derive_str.is_empty() {
+        "".parse().unwrap()
+    } else {
+        format!("#[derive({in_derive_str})]").parse().unwrap()
+    };
+
+    let expanded = quote! {
+        #derive_part
+        #item
+
+        let #var_to_put_string = #item_str;
+    };
+    TokenStream::from(expanded)
+}
+
 #[proc_macro]
 pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let trait_stuff = quote! {
