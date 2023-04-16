@@ -9,10 +9,6 @@ pub struct MyStruct {
 pub type ExportType = MyStruct;
 
 pub fn wasm_entrypoint(obj: &mut LibraryObj, cb: fn(&mut MyStruct)) {
-    // let user_data = &mut obj.user_data;
-    // if let UserData::Struct { name } = user_data {
-    //     *name = "dsadsadsa".into();
-    // }
     let mut mystuff = MyStruct {
         apples: 2,
     };
