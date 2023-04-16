@@ -3,4 +3,6 @@ members = [
     "wasm_type_gen",
     "wasm_type_gen_derive",
     "example1",
+    "example2_derive",
+    "example2",
 ]

@@ -1,0 +1,14 @@
+[package]
+name = "example2_derive"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+proc-macro2 = "1.0.52"
+syn = { version = "2", features = ["extra-traits"] }
+quote = "1"
+wasm_type_gen = { path = "../wasm_type_gen" }
+adler32 = "*"
+
+[lib]
+proc-macro = true
