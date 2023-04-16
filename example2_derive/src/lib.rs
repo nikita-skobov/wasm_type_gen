@@ -209,6 +209,95 @@ fn rename_ident(id: &mut Ident, name: &str) {
 
 #[proc_macro_attribute]
 pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    // this is the data the end user passed to the macro, and we serialize it
+    // and pass it to the wasm module that the user specified
+    #[derive(WasmTypeGen, Debug)]
+    pub enum UserData {
+        Struct { name: String, },
+        Function { name: String, },
+        Module { name: String, },
+        GlobalVariable { name: String, },
+        Missing,
+    }
+    impl Default for UserData {
+        fn default() -> Self {
+            Self::Missing
+        }
+    }
+
+    #[derive(WasmTypeGen, Debug, Default)]
+    pub struct LibraryObj {
+        pub compiler_error_message: String,
+        pub user_data: UserData,
+    }
+
+    impl From<&InputType> for UserData {
+        fn from(value: &InputType) -> Self {
+            let name = value.get_name();
+            match value {
+                InputType::Struct(x) => {
+                    Self::Struct { name }
+                },
+                InputType::Function(x) => {
+                    Self::Function { name }
+                }
+                InputType::GlobalVar(x) => {
+                    Self::GlobalVariable { name }
+                }
+                InputType::Module(x) => {
+                    Self::Module { name }
+                }
+            }
+        }
+    }
+
+    impl InputType {
+        pub fn apply_library_obj_changes(&mut self, lib_obj: LibraryObj) {
+            let user_data = lib_obj.user_data;
+            match (self, user_data) {
+                (InputType::Struct(x), UserData::Struct { name }) => {
+                    rename_ident(&mut x.ident, &name);
+                }
+                (InputType::Function(x), UserData::Function { name }) => {
+                    rename_ident(&mut x.sig.ident, &name);
+                }
+                (InputType::GlobalVar(GlobalVariable::Constant(x)), UserData::GlobalVariable { name }) => {
+                    rename_ident(&mut x.ident, &name);
+                }
+                (InputType::GlobalVar(GlobalVariable::Static(x)), UserData::GlobalVariable { name }) => {
+                    rename_ident(&mut x.ident, &name);
+                }
+                (InputType::Module(x), UserData::Module { name }) => {
+                    rename_ident(&mut x.ident, &name);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[output_and_stringify_basic(library_obj_extra_impl)]
+    impl LibraryObj {
+        fn compile_error(&mut self, err_msg: &str) {
+            self.compiler_error_message = err_msg.into();
+        }
+    }
+
+    // this is a hack to allow people who write wasm_modules easy type hints.
+    // if we detect no attributes, then we just output all of the types that
+    // wasm module writers depend on, like UserData, and LibraryObj
+    if attr.is_empty() {
+        let mut include_str = LibraryObj::include_in_rs_wasm();
+        include_str.push_str(library_obj_extra_impl);
+        let include_tokens = proc_macro2::TokenStream::from_str(&include_str).unwrap_or_default();
+        let parsing_tokens = proc_macro2::TokenStream::from_str(WASM_PARSING_TRAIT_STR).unwrap_or_default();
+        let out = quote! {
+            #parsing_tokens
+
+            #include_tokens
+        };
+        return TokenStream::from(out);
+    }
+    
     let mut attr = proc_macro2::TokenStream::from(attr);
     let item = proc_macro2::TokenStream::from(item);
     let item_str = item.to_string();
@@ -337,72 +426,6 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         None => panic!("Module '{}' is missing a valid ExportType. Expected to find statement like `pub type ExportType = SomeStruct;`", module_path)
     };
 
-    // this is the data the end user passed to the macro, and we serialize it
-    // and pass it to the wasm module that the user specified
-    #[derive(WasmTypeGen, Debug)]
-    pub enum UserData {
-        Struct { name: String, },
-        Function { name: String, },
-        Module { name: String, },
-        GlobalVariable { name: String, },
-        Missing,
-    }
-    impl Default for UserData {
-        fn default() -> Self {
-            Self::Missing
-        }
-    }
-
-    #[derive(WasmTypeGen, Debug, Default)]
-    pub struct LibraryObj {
-        pub compiler_error_message: String,
-        pub user_data: UserData,
-    }
-
-    impl From<&InputType> for UserData {
-        fn from(value: &InputType) -> Self {
-            let name = value.get_name();
-            match value {
-                InputType::Struct(x) => {
-                    Self::Struct { name }
-                },
-                InputType::Function(x) => {
-                    Self::Function { name }
-                }
-                InputType::GlobalVar(x) => {
-                    Self::GlobalVariable { name }
-                }
-                InputType::Module(x) => {
-                    Self::Module { name }
-                }
-            }
-        }
-    }
-
-    impl InputType {
-        pub fn apply_library_obj_changes(&mut self, lib_obj: LibraryObj) {
-            let user_data = lib_obj.user_data;
-            match (self, user_data) {
-                (InputType::Struct(x), UserData::Struct { name }) => {
-                    rename_ident(&mut x.ident, &name);
-                }
-                (InputType::Function(x), UserData::Function { name }) => {
-                    rename_ident(&mut x.sig.ident, &name);
-                }
-                (InputType::GlobalVar(GlobalVariable::Constant(x)), UserData::GlobalVariable { name }) => {
-                    rename_ident(&mut x.ident, &name);
-                }
-                (InputType::GlobalVar(GlobalVariable::Static(x)), UserData::GlobalVariable { name }) => {
-                    rename_ident(&mut x.ident, &name);
-                }
-                (InputType::Module(x), UserData::Module { name }) => {
-                    rename_ident(&mut x.ident, &name);
-                }
-                _ => {}
-            }
-        }
-    }
-
     // this is necessary to allow the compile function to find previously compiled versions in case it fails to compile.
     // it groups it by this "item_hash".
     let item_name = input_type.get_name();
@@ -412,6 +435,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     let mut add_to_code = LibraryObj::include_in_rs_wasm();
     add_to_code.push_str(LibraryObj::gen_entrypoint());
     add_to_code.push_str(WASM_PARSING_TRAIT_STR);
+    add_to_code.push_str(library_obj_extra_impl);
 
     let final_wasm_source = quote! {
         pub fn wasm_main(library_obj: &mut LibraryObj) {
@@ -425,12 +449,6 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         pub fn users_fn(data: &mut #module_name_ident::#exported_name) {
             let cb = #attr;
             cb(data);
-        }
-
-        impl LibraryObj {
-            fn compile_error(&mut self, err_msg: &str) {
-                self.compiler_error_message = err_msg.into();
-            }
         }
     };
 
