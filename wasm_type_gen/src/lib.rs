@@ -2,7 +2,7 @@ use std::{path::PathBuf, process::{Command, Stdio}, io::{Write, Read}};
 
 use wasm_type_gen_derive::{generate_parsing_traits};
 pub use wasm_type_gen_derive::WasmTypeGen;
-pub use wasm_type_gen_derive::output_and_stringify;
+pub use wasm_type_gen_derive::{output_and_stringify, output_and_stringify_basic};
 use wasmtime::*;
 
 generate_parsing_traits!();
@@ -89,6 +89,7 @@ pub fn compile_string_to_wasm(wasm_out_name: &str, file_data: &str, add_to_code:
         .arg("-C").arg("opt-level=3")
         .arg("-C").arg("debug-assertions=off")
         .arg("-C").arg("codegen-units=1")
+        .arg("-C").arg("linker-plugin-lto=yes")
         .arg("-C").arg("strip=symbols")
         .arg("-C").arg("lto=yes")
         .arg("-o").arg(module_path.as_str())
