@@ -8,7 +8,7 @@ use syn::{
     parse_file,
     ItemFn,
     ItemStruct,
-    ItemStatic, ItemConst, ItemMod,
+    ItemStatic, ItemConst, ItemMod, Visibility, token::Pub, ExprMatch,
     // Data,
     // Fields,
     // FieldsNamed,
@@ -137,11 +137,13 @@ fn load_rs_wasm_module(module_path: &str) -> Result<String, String> {
         .map_err(|e| format!("Failed to read module path '{module_path}'\n{:?}", e))?)
 }
 
+#[derive(Debug)]
 enum GlobalVariable {
     Constant(ItemConst),
     Static(ItemStatic),
 }
 
+#[derive(Debug)]
 enum InputType {
     Struct(ItemStruct),
     Function(ItemFn),
@@ -196,6 +198,7 @@ fn get_input_type(item: proc_macro2::TokenStream) -> Option<InputType> {
     if let Some(input) = is_mod_input {
         return Some(InputType::Module(input));
     }
+    let something = syn::parse2::<ExprMatch>(item.clone());
     None
 }
 
@@ -207,22 +210,63 @@ fn rename_ident(id: &mut Ident, name: &str) {
     }
 }
 
+fn is_public(vis: &Visibility) -> bool {
+    match vis {
+        Visibility::Public(_) => true,
+        _ => false,
+    }
+}
+
+fn set_visibility(vis: &mut Visibility, is_pub: bool) {
+    let p = Pub::default();
+    match (&vis, is_pub) {
+        (Visibility::Public(_), false) => {
+            *vis = Visibility::Inherited;
+        }
+        (Visibility::Restricted(_), true) => {
+            *vis = Visibility::Public(p);
+        }
+        (Visibility::Inherited, true) => {
+            *vis = Visibility::Public(p);
+        }
+        _ => {}
+    }
+}
+
 #[proc_macro_attribute]
 pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     // this is the data the end user passed to the macro, and we serialize it
     // and pass it to the wasm module that the user specified
     #[derive(WasmTypeGen, Debug)]
     pub enum UserData {
-        Struct { name: String, },
-        Function { name: String, },
-        Module { name: String, },
-        GlobalVariable { name: String, },
+        /// fields are read only. modifying them in your wasm_module has no effect.
+        Struct { name: String, is_pub: bool, fields: Vec<UserField> },
+        /// inputs are read only. modifying them in your wasm_module has no effect.
+        Function { name: String, is_pub: bool, inputs: Vec<UserInput> },
+        Module { name: String, is_pub: bool, },
+        GlobalVariable { name: String, is_pub: bool, },
         Missing,
     }
     impl Default for UserData {
         fn default() -> Self {
             Self::Missing
         }
+    }
+
+    #[derive(WasmTypeGen, Debug)]
+    pub struct UserField {
+        /// only relevant for struct fields. not applicable to function params.
+        pub is_public: bool,
+        pub name: String,
+        pub ty: String,
+    }
+
+    #[derive(WasmTypeGen, Debug)]
+    pub struct UserInput {
+        /// only relevant for input params to a function. not applicable to struct fields.
+        pub is_self: bool,
+        pub name: String,
+        pub ty: String,
     }
 
     #[derive(WasmTypeGen, Debug, Default)]
@@ -236,16 +280,46 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
             let name = value.get_name();
             match value {
                 InputType::Struct(x) => {
-                    Self::Struct { name }
+                    let mut fields = vec![];
+                    for field in x.fields.iter() {
+                        let usr_field = UserField {
+                            is_public: is_public(&field.vis),
+                            name: field.ident.as_ref().map(|i| i.to_string()).unwrap_or_default(),
+                            ty: field.ty.to_token_stream().to_string(),
+                        };
+                        fields.push(usr_field);
+                    }
+                    Self::Struct { name, is_pub: is_public(&x.vis), fields }
                 },
                 InputType::Function(x) => {
-                    Self::Function { name }
+                    let mut inputs = vec![];
+                    for input in x.sig.inputs.iter() {
+                        let usr_field = UserInput {
+                            is_self: match input {
+                                syn::FnArg::Receiver(_) => true,
+                                syn::FnArg::Typed(_) => false,
+                            },
+                            name: match input {
+                                syn::FnArg::Receiver(_) => "&self".into(),
+                                syn::FnArg::Typed(ty) => ty.pat.to_token_stream().to_string(),
+                            },
+                            ty: match input {
+                                syn::FnArg::Receiver(_) => "".into(),
+                                syn::FnArg::Typed(ty) => ty.ty.to_token_stream().to_string(),
+                            }
+                        };
+                        inputs.push(usr_field);
+                    }
+                    Self::Function { name, is_pub: is_public(&x.vis), inputs }
                 }
-                InputType::GlobalVar(x) => {
-                    Self::GlobalVariable { name }
+                InputType::GlobalVar(GlobalVariable::Constant(x)) => {
+                    Self::GlobalVariable { name, is_pub: is_public(&x.vis) }
+                }
+                InputType::GlobalVar(GlobalVariable::Static(x)) => {
+                    Self::GlobalVariable { name, is_pub: is_public(&x.vis) }
                 }
                 InputType::Module(x) => {
-                    Self::Module { name }
+                    Self::Module { name, is_pub: is_public(&x.vis) }
                 }
             }
         }
@@ -255,20 +329,25 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         pub fn apply_library_obj_changes(&mut self, lib_obj: LibraryObj) {
             let user_data = lib_obj.user_data;
             match (self, user_data) {
-                (InputType::Struct(x), UserData::Struct { name }) => {
+                (InputType::Struct(x), UserData::Struct { name, is_pub, .. }) => {
                     rename_ident(&mut x.ident, &name);
+                    set_visibility(&mut x.vis, is_pub);
                 }
-                (InputType::Function(x), UserData::Function { name }) => {
+                (InputType::Function(x), UserData::Function { name, is_pub, .. }) => {
                     rename_ident(&mut x.sig.ident, &name);
+                    set_visibility(&mut x.vis, is_pub);
                 }
-                (InputType::GlobalVar(GlobalVariable::Constant(x)), UserData::GlobalVariable { name }) => {
+                (InputType::GlobalVar(GlobalVariable::Constant(x)), UserData::GlobalVariable { name, is_pub, .. }) => {
                     rename_ident(&mut x.ident, &name);
+                    set_visibility(&mut x.vis, is_pub);
                 }
-                (InputType::GlobalVar(GlobalVariable::Static(x)), UserData::GlobalVariable { name }) => {
+                (InputType::GlobalVar(GlobalVariable::Static(x)), UserData::GlobalVariable { name, is_pub, .. }) => {
                     rename_ident(&mut x.ident, &name);
+                    set_visibility(&mut x.vis, is_pub);
                 }
-                (InputType::Module(x), UserData::Module { name }) => {
+                (InputType::Module(x), UserData::Module { name, is_pub, .. }) => {
                     rename_ident(&mut x.ident, &name);
+                    set_visibility(&mut x.vis, is_pub);
                 }
                 _ => {}
             }
@@ -281,6 +360,34 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
             self.compiler_error_message = err_msg.into();
         }
     }
+    #[output_and_stringify_basic(user_data_extra_impl)]
+    impl UserData {
+        /// Get the name of the user's data that they put this macro over.
+        /// for example `struct MyStruct { ... }` returns "MyStruct"
+        /// 
+        /// or `pub fn helloworld(a: u32) { ... }` returns "helloworld"
+        /// Can rename the user's data type by modifying this string directly
+        fn get_name(&mut self) -> &mut String {
+            match self {
+                UserData::Struct { name, .. } => name,
+                UserData::Function { name, .. } => name,
+                UserData::Module { name, .. } => name,
+                UserData::GlobalVariable { name, .. } => name,
+                UserData::Missing => unreachable!(),
+            }
+        }
+        /// Returns a bool of whether or not the user marked their data as pub or not.
+        /// Can set this value to true or false depending on your module's purpose.
+        fn get_public_vis(&mut self) -> &mut bool {
+            match self {
+                UserData::Struct { is_pub, .. } => is_pub,
+                UserData::Function { is_pub, .. } => is_pub,
+                UserData::Module { is_pub, .. } => is_pub,
+                UserData::GlobalVariable { is_pub, .. } => is_pub,
+                UserData::Missing => unreachable!(),
+            }
+        }
+    }
 
     // this is a hack to allow people who write wasm_modules easy type hints.
     // if we detect no attributes, then we just output all of the types that
@@ -288,6 +395,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     if attr.is_empty() {
         let mut include_str = LibraryObj::include_in_rs_wasm();
         include_str.push_str(library_obj_extra_impl);
+        include_str.push_str(user_data_extra_impl);
         let include_tokens = proc_macro2::TokenStream::from_str(&include_str).unwrap_or_default();
         let parsing_tokens = proc_macro2::TokenStream::from_str(WASM_PARSING_TRAIT_STR).unwrap_or_default();
         let out = quote! {
@@ -316,6 +424,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     } else {
         panic!("wasm_meta was applied to an item that we currently do not support parsing. Currently only supports functions and deriveInputs");
     };
+    println!("{:#?}", input_type);
 
     // get everything in callback input signature |mything: &mut modulename::StructName| { ... }
     let splits: Vec<_> = attr_str.split("|").collect();
@@ -436,6 +545,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     add_to_code.push_str(LibraryObj::gen_entrypoint());
     add_to_code.push_str(WASM_PARSING_TRAIT_STR);
     add_to_code.push_str(library_obj_extra_impl);
+    add_to_code.push_str(user_data_extra_impl);
 
     let final_wasm_source = quote! {
         pub fn wasm_main(library_obj: &mut LibraryObj) {
