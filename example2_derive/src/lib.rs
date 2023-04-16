@@ -357,6 +357,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     #[derive(WasmTypeGen, Debug, Default)]
     pub struct LibraryObj {
         pub compiler_error_message: String,
+        pub add_code_after: Vec<String>,
         pub user_data: UserData,
     }
 
@@ -667,7 +668,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     // TODO: instead of hashing the whole item input, use the item name, for eg function name or struct name.
     // this way it wont change as often
     // let item_hash = adler32::adler32(item_str.as_bytes()).unwrap_or(0);
-    let lib_obj = get_wasm_output(
+    let mut lib_obj = get_wasm_output(
         &item_name,
         &final_wasm_source.to_string(),
         Some(add_to_code), 
@@ -685,6 +686,17 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         }
     }
 
+    let mut add_after = vec![];
+    for s in lib_obj.add_code_after.drain(..) {
+        let tokens = match proc_macro2::TokenStream::from_str(&s) {
+            Ok(o) => o,
+            Err(e) => {
+                panic!("Module '{}' produced invalid after_code tokens:\n{}\nError:\n{:?}", module_name, s, e);
+            }
+        };
+        add_after.push(tokens);
+    }
+
     input_type.apply_library_obj_changes(lib_obj);
     let item = input_type.back_to_stream(&format!("_b{hash}"));
     let user_out = quote! {
@@ -693,6 +705,8 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
             let cb = #attr;
         }
         #item
+
+        #(#add_after)*
     };
 
     TokenStream::from(user_out)
