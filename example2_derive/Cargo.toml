@@ -9,6 +9,7 @@ syn = { version = "2", features = ["extra-traits"] }
 quote = "1"
 wasm_type_gen = { path = "../wasm_type_gen" }
 adler32 = "*"
+toml = "0.7.3"
 
 [lib]
 proc-macro = true

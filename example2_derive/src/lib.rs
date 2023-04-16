@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::str::FromStr;
+use toml::Table;
 
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
@@ -47,6 +48,7 @@ pub fn wasm_modules(items: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     let base_dir = get_wasm_base_dir();
     let mut exports = vec![];
+    let mut required_crates = vec![];
     // load every wasm module and export its types into the file the user is editing
     for mut path in module_paths {
         let original_path = path.clone();
@@ -103,6 +105,43 @@ pub fn wasm_modules(items: proc_macro::TokenStream) -> proc_macro::TokenStream {
         } else {
             continue;
         };
+        let reqs = parsed_wasm_code.items.iter().find_map(|item| {
+            if let syn::Item::Const(c) = item {
+                if c.ident.to_string() == "REQUIRED_CRATES" {
+                    let arr = match &*c.expr {
+                        syn::Expr::Array(arr) => arr,
+                        syn::Expr::Reference(r) => {
+                            if let syn::Expr::Array(arr) = &*r.expr {
+                                arr
+                            } else {
+                                return None;
+                            }
+                        }
+                        _ => {
+                            return None;
+                        }
+                    };
+                    let mut out: Vec<String> = vec![];
+                    for item in arr.elems.iter() {
+                        if let syn::Expr::Lit(l) = item {
+                            if let syn::Lit::Str(s) = &l.lit {
+                                let mut s = s.token().to_string();
+                                while s.starts_with('"') && s.ends_with('"') {
+                                    s.remove(0);
+                                    s.pop();
+                                }
+                                out.push(s);
+                            }
+                        }
+                    }
+                    return Some(out);
+                }
+            }
+            None
+        });
+        if let Some(requireds) = reqs {
+            required_crates.push((original_path.clone(), requireds));
+        }
         // search the file again and export its type inline:
         let export_item = parsed_wasm_code.items.iter().find(|thing| {
             match thing {
@@ -120,6 +159,35 @@ pub fn wasm_modules(items: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     #export
                 }
             });
+        }
+    }
+
+    if !required_crates.is_empty() {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into());
+        let manifest_file_path = format!("{manifest_dir}/Cargo.toml");
+        let cargo_file_str = match std::fs::read_to_string(manifest_file_path) {
+            Ok(o) => o,
+            Err(e) => panic!("One or more of your wasm modules has REQUIRED_CRATES. But failed to find Cargo.toml.\nError:\n{:?}", e),
+        };
+        let value = cargo_file_str.parse::<Table>().unwrap();
+        let mut dependencies = vec![];
+        if let Some(deps) = value.get("dependencies") {
+            if let toml::Value::Table(deps) = deps {
+                for (key, _) in deps {
+                    dependencies.push(key);
+                }
+            }
+        }
+        for (wasm_mod_name, requireds) in required_crates {
+            let mut missing = vec![];
+            for req in requireds.iter() {
+                if !dependencies.contains(&req) {
+                    missing.push(req);
+                }
+            }
+            if !missing.is_empty() {
+                panic!("Wasm module '{}' depends on the following crates:\n{:#?}\nFailed to find:\n{:#?}\nPlease edit your Cargo.toml file to add these dependencies\n", wasm_mod_name, requireds, missing);
+            }
         }
     }
 
@@ -446,7 +514,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     } else {
         panic!("wasm_meta was applied to an item that we currently do not support parsing. Currently only supports functions and deriveInputs");
     };
-    println!("{:#?}", input_type);
+    // println!("{:#?}", input_type);
 
     // get everything in callback input signature |mything: &mut modulename::StructName| { ... }
     let splits: Vec<_> = attr_str.split("|").collect();
@@ -605,8 +673,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         Some(add_to_code), 
         &pass_this
     ).unwrap_or_default();
-
-    println!("GOT BACK FROM WASM:\n{:#?}", lib_obj);
+    // println!("GOT BACK FROM WASM:\n{:#?}", lib_obj);
 
     if !lib_obj.compiler_error_message.is_empty() {
         // TODO: currently we just add a compile_error to the end of the stream..
