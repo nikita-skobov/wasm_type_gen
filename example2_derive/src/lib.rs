@@ -149,6 +149,7 @@ enum InputType {
     Function(ItemFn),
     GlobalVar(GlobalVariable),
     Module(ItemMod),
+    Match(ExprMatch),
 }
 
 impl InputType {
@@ -161,15 +162,27 @@ impl InputType {
                 GlobalVariable::Constant(c) => c.ident.to_string(),
                 GlobalVariable::Static(c) => c.ident.to_string(),
             }
+            InputType::Match(mi) => mi.expr.to_token_stream().to_string(),
         }
     }
-    pub fn back_to_stream(self) -> proc_macro2::TokenStream {
+    /// use_name is only necessary for Match input types. for match statements
+    /// we hide the match inside a function, otherwise most match statements arent valid
+    /// in a const context, but const contexts is the only way we can conveniently read + parse them
+    pub fn back_to_stream(self, use_name: &str) -> proc_macro2::TokenStream {
         match self {
             InputType::Struct(s) => s.into_token_stream(),
             InputType::Function(f) => f.into_token_stream(),
             InputType::GlobalVar(g) => match g {
                 GlobalVariable::Constant(c) => c.into_token_stream(),
                 GlobalVariable::Static(s) => s.into_token_stream(),
+            }
+            InputType::Match(m) => {
+                let use_name_ident = format_ident!("{use_name}");
+                quote! {
+                    fn #use_name_ident() {
+                        #m
+                    }
+                }
             }
             InputType::Module(m) => m.into_token_stream(),
         }
@@ -185,20 +198,23 @@ fn get_input_type(item: proc_macro2::TokenStream) -> Option<InputType> {
     if let Some(function_input) = is_fn_input {
         return Some(InputType::Function(function_input));
     }
-    
     let is_static_input = syn::parse2::<ItemStatic>(item.clone()).ok();
     if let Some(input) = is_static_input {
         return Some(InputType::GlobalVar(GlobalVariable::Static(input)));
     }
     let is_const_input = syn::parse2::<ItemConst>(item.clone()).ok();
     if let Some(input) = is_const_input {
+        if input.ident.to_string() == "_" {
+            if let syn::Expr::Match(m) = *input.expr {
+                return Some(InputType::Match(m));
+            }
+        }
         return Some(InputType::GlobalVar(GlobalVariable::Constant(input)));
     }
     let is_mod_input = syn::parse2::<ItemMod>(item.clone()).ok();
     if let Some(input) = is_mod_input {
         return Some(InputType::Module(input));
     }
-    let something = syn::parse2::<ExprMatch>(item.clone());
     None
 }
 
@@ -245,6 +261,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         Function { name: String, is_pub: bool, inputs: Vec<UserInput> },
         Module { name: String, is_pub: bool, },
         GlobalVariable { name: String, is_pub: bool, },
+        Match { name: String, is_pub: bool },
         Missing,
     }
     impl Default for UserData {
@@ -321,6 +338,9 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
                 InputType::Module(x) => {
                     Self::Module { name, is_pub: is_public(&x.vis) }
                 }
+                InputType::Match(x) => {
+                    Self::Match { name, is_pub: false }
+                }
             }
         }
     }
@@ -373,6 +393,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
                 UserData::Function { name, .. } => name,
                 UserData::Module { name, .. } => name,
                 UserData::GlobalVariable { name, .. } => name,
+                UserData::Match { name, .. } => name,
                 UserData::Missing => unreachable!(),
             }
         }
@@ -384,6 +405,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
                 UserData::Function { is_pub, .. } => is_pub,
                 UserData::Module { is_pub, .. } => is_pub,
                 UserData::GlobalVariable { is_pub, .. } => is_pub,
+                UserData::Match { is_pub, .. } => is_pub,
                 UserData::Missing => unreachable!(),
             }
         }
@@ -597,7 +619,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     }
 
     input_type.apply_library_obj_changes(lib_obj);
-    let item = input_type.back_to_stream();
+    let item = input_type.back_to_stream(&format!("_b{hash}"));
     let user_out = quote! {
         // we use a random hash for the func name to not conflict with other invocations of this macro
         fn #func_name() {
