@@ -5,9 +5,9 @@
 ///! in order to use it as a wasm module.
 
 use example2_derive::wasm_meta;
-
 #[wasm_meta]
 const _: () = ();
+// everything below this line can be copied into wasm_modules:
 
 /// doc comments work!
 pub struct MyStruct {
@@ -20,10 +20,6 @@ pub struct MyStruct {
 pub type ExportType = MyStruct;
 
 pub fn wasm_entrypoint(obj: &mut LibraryObj, cb: fn(&mut MyStruct)) {
-    let user_data = &mut obj.user_data;
-    if let UserData::Struct { name } = user_data {
-        *name = "Something2".into();
-    }
     let mut mystuff = MyStruct {
         apples: 2,
     };
