@@ -16,3 +16,5 @@ example1/*/target
 example1/*/wasmout
 example1/*/*.wasm
 compilationlog.txt
+wasmout
+*.wasm
