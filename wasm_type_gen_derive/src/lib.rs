@@ -6,6 +6,7 @@ use quote::{quote, format_ident};
 /// After that, everything gets added to a `#[derive(*)]` that gets created right before the rest of your items.
 /// For this reason, this macro is only intended to be used for struct defs. eg:
 /// ```
+/// use wasm_type_gen_derive::output_and_stringify;
 /// #[output_and_stringify(mystructstring, Debug)]
 /// pub struct Hello {
 ///    a: u32
