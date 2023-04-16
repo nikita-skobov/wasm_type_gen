@@ -14,7 +14,3 @@ mod modtest;
 pub struct Something {
     pub a: u64,
 }
-
-fn main() {
-    let thing = Something {a: 6};
-}
