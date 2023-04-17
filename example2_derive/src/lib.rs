@@ -326,7 +326,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         /// fields are read only. modifying them in your wasm_module has no effect.
         Struct { name: String, is_pub: bool, fields: Vec<UserField> },
         /// inputs are read only. modifying them in your wasm_module has no effect.
-        Function { name: String, is_pub: bool, inputs: Vec<UserInput> },
+        Function { name: String, is_pub: bool, is_async: bool, inputs: Vec<UserInput>, return_ty: String },
         Module { name: String, is_pub: bool, },
         GlobalVariable { name: String, is_pub: bool, },
         Match { name: String, is_pub: bool },
@@ -396,7 +396,11 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
                         };
                         inputs.push(usr_field);
                     }
-                    Self::Function { name, is_pub: is_public(&x.vis), inputs }
+                    let return_ty = match &x.sig.output {
+                        syn::ReturnType::Default => "".into(),
+                        syn::ReturnType::Type(a, b) => b.to_token_stream().to_string(),
+                    };
+                    Self::Function { name, is_pub: is_public(&x.vis), inputs, is_async: x.sig.asyncness.is_some(), return_ty }
                 }
                 InputType::GlobalVar(GlobalVariable::Constant(x)) => {
                     Self::GlobalVariable { name, is_pub: is_public(&x.vis) }
@@ -674,7 +678,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         Some(add_to_code), 
         &pass_this
     ).unwrap_or_default();
-    // println!("GOT BACK FROM WASM:\n{:#?}", lib_obj);
+    println!("GOT BACK FROM WASM:\n{:#?}", lib_obj);
 
     if !lib_obj.compiler_error_message.is_empty() {
         // TODO: currently we just add a compile_error to the end of the stream..
