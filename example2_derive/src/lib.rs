@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, io::Write};
 use std::str::FromStr;
 use toml::Table;
 
@@ -25,6 +25,13 @@ use syn::{
 };
 use quote::{quote, format_ident, ToTokens};
 use wasm_type_gen::*;
+
+// TODO: need to use locking? i think proc-macros run single threaded always so unsure if thats required...
+static mut PRE_BUILD_CMDS: Vec<String> = vec![];
+static mut BUILD_CMDS: Vec<String> = vec![];
+static mut PACKAGE_CMDS: Vec<String> = vec![];
+static mut DEPLOY_CMDS: Vec<String> = vec![];
+static mut POST_DEPLOY_CMDS: Vec<String> = vec![];
 
 fn get_wasm_base_dir() -> String {
     let base_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into());
@@ -317,6 +324,135 @@ fn set_visibility(vis: &mut Visibility, is_pub: bool) {
     }
 }
 
+/// read the existing commands output by previous wasm module invocations
+/// and merge the current commands with the previous ones such that the previous ones are first
+/// in the vector. After returning, the vectors provided will contain the current
+/// state of the deploy.sh file and can be output to file one item at a time.
+fn merge_commands(
+    pre_build_cmds: &mut Vec<String>,
+    build_cmds: &mut Vec<String>,
+    package_cmds: &mut Vec<String>,
+    deploy_cmds: &mut Vec<String>,
+    post_deploy_cmds: &mut Vec<String>,
+) {
+    unsafe {
+        // append new data to the existing data.
+        // we use mem::take to avoid iterating and extra copying
+        let stolen = std::mem::take(pre_build_cmds);
+        PRE_BUILD_CMDS.extend(stolen);
+        let stolen = std::mem::take(build_cmds);
+        BUILD_CMDS.extend(stolen);
+        let stolen = std::mem::take(package_cmds);
+        PACKAGE_CMDS.extend(stolen);
+        let stolen = std::mem::take(deploy_cmds);
+        DEPLOY_CMDS.extend(stolen);
+        let stolen = std::mem::take(post_deploy_cmds);
+        POST_DEPLOY_CMDS.extend(stolen);
+
+        // we do have to do 1 big copy though and that is to fill the passed
+        // in mutable vectors back with the current state of all the commands:
+        *pre_build_cmds = PRE_BUILD_CMDS.clone();
+        *build_cmds = BUILD_CMDS.clone();
+        *package_cmds = PACKAGE_CMDS.clone();
+        *deploy_cmds = DEPLOY_CMDS.clone();
+        *post_deploy_cmds = POST_DEPLOY_CMDS.clone();
+    }
+}
+
+/// iterate over the commands that the user's wasm module returned and ensure that:
+/// - no command contains reserved comments (dont confuse the user)
+/// - no command contains newlines (dont confuse the user + easier to verify)
+/// - add a reserved comment to the beginning explaining where this command(s) came from
+fn verify_cmd_vec(
+    wasm_module_name: &str,
+    user_type_name: &str,
+    cmds: &mut Vec<String>
+) -> Result<(), String> {
+    // no point in doing anything if there's no commands
+    if cmds.is_empty() { return Ok(()) }
+    let reserved = [
+        "# wasm_module",
+        "# pre-build",
+        "# build",
+        "# package",
+        "# deploy",
+        "# post-build"
+    ];
+
+    for cmd in cmds.iter_mut() {
+        if cmd.contains("\n") {
+            return Err(format!("Wasm module '{wasm_module_name}' attempted to output a shell command with a newline while reading '{user_type_name}'. shell commands with newlines are not supported. Please verify the usage of this module"));
+        }
+        for r in reserved {
+            if cmd.contains(r) {
+                return Err(format!("Wasm module '{wasm_module_name}' attempted to output a shell command with a reserved keyword '{r}' while reading '{user_type_name}'."));
+            }
+        }
+        *cmd = cmd.trim().to_string();
+        if cmd.is_empty() {
+            return Err(format!("Wasm module '{wasm_module_name}' attempted to output an empty line shell command while reading '{user_type_name}'. empty lines in shell commands are not supported."));
+        }
+        cmd.push('\n');
+    }
+    cmds.insert(0, format!("# wasm_module({wasm_module_name}) => {user_type_name}:\n"));
+    cmds.push("\n".into());
+    Ok(())
+}
+
+fn append_to_file(
+    f: &mut std::fs::File,
+    comment: &str,
+    data: Vec<String>,
+) -> Result<(), String> {
+    if data.is_empty() { return Ok(()) }
+
+    let err_cb = |e: std::io::Error| {
+        format!("Failed to write to deploy.sh file\n{:?}", e)
+    };
+    f.write_all(comment.as_bytes()).map_err(err_cb)?;
+    for line in data {
+        f.write_all(line.as_bytes()).map_err(err_cb)?;
+    }
+    f.write_all(b"\n\n").map_err(err_cb)?;
+    Ok(())
+}
+
+fn output_command_files(
+    wasm_module_name: &str,
+    user_type_name: &str,
+    mut pre_build_cmds: Vec<String>,
+    mut build_cmds: Vec<String>,
+    mut package_cmds: Vec<String>,
+    mut deploy_cmds: Vec<String>,
+    mut post_deploy_cmds: Vec<String>,
+) -> Result<(), String> {
+    let base_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into());
+    let deploy_file = format!("{base_dir}/deploy.sh");
+
+    // verify and add comments:
+    verify_cmd_vec(wasm_module_name, user_type_name, &mut pre_build_cmds)?;
+    verify_cmd_vec(wasm_module_name, user_type_name, &mut build_cmds)?;
+    verify_cmd_vec(wasm_module_name, user_type_name, &mut package_cmds)?;
+    verify_cmd_vec(wasm_module_name, user_type_name, &mut deploy_cmds)?;
+    verify_cmd_vec(wasm_module_name, user_type_name, &mut post_deploy_cmds)?;
+
+    merge_commands(&mut pre_build_cmds, &mut build_cmds, &mut package_cmds, &mut deploy_cmds, &mut post_deploy_cmds);
+
+    // open in overwrite mode
+    let mut f = std::fs::File::create(&deploy_file)
+        .map_err(|e| format!("Failed to create deploy.sh file\nError:\n{:?}", e))?;
+
+    // output structured deploy.sh file
+    append_to_file(&mut f, "# pre-build:\n", pre_build_cmds)?;
+    append_to_file(&mut f, "# build:\n", build_cmds)?;
+    append_to_file(&mut f, "# package:\n", package_cmds)?;
+    append_to_file(&mut f, "# deploy:\n", deploy_cmds)?;
+    append_to_file(&mut f, "# post-deploy:\n", post_deploy_cmds)?;
+
+    Ok(())
+}
+
+
 #[proc_macro_attribute]
 pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     // this is the data the end user passed to the macro, and we serialize it
@@ -359,6 +495,23 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         pub compiler_error_message: String,
         pub add_code_after: Vec<String>,
         pub user_data: UserData,
+        pub pre_build_cmds: Vec<String>,
+        pub build_cmds: Vec<String>,
+        pub package_cmds: Vec<String>,
+        pub deploy_cmds: Vec<String>,
+        pub post_deploy_cmds: Vec<String>,
+    }
+    impl LibraryObj {
+        pub fn handle_commands(&mut self, wasm_module_name: &str, user_type_name: &str) -> Result<(), String> {
+            output_command_files(
+                wasm_module_name, user_type_name,
+                std::mem::take(&mut self.pre_build_cmds),
+                std::mem::take(&mut self.build_cmds),
+                std::mem::take(&mut self.package_cmds),
+                std::mem::take(&mut self.deploy_cmds),
+                std::mem::take(&mut self.post_deploy_cmds),
+            )
+        }
     }
 
     impl From<&InputType> for UserData {
@@ -451,6 +604,21 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     impl LibraryObj {
         fn compile_error(&mut self, err_msg: &str) {
             self.compiler_error_message = err_msg.into();
+        }
+        fn add_pre_build_cmd(&mut self, cmd: String) {
+            self.pre_build_cmds.push(cmd);
+        }
+        fn add_build_cmd(&mut self, cmd: String) {
+            self.build_cmds.push(cmd);
+        }
+        fn add_package_cmd(&mut self, cmd: String) {
+            self.package_cmds.push(cmd);
+        }
+        fn add_deploy_cmd(&mut self, cmd: String) {
+            self.deploy_cmds.push(cmd);
+        }
+        fn add_post_deploy_cmd(&mut self, cmd: String) {
+            self.post_deploy_cmds.push(cmd);
         }
     }
     #[output_and_stringify_basic(user_data_extra_impl)]
@@ -699,6 +867,21 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
             }
         };
         add_after.push(tokens);
+    }
+
+    // through manual testing i've found that running cargo build uses RUST_BACKTRACE full
+    // whereas the cargo command used by IDEs sets this to short. basically: dont output command
+    // files every keystroke.. instead we only wish to do this when the user actually builds.
+    let mut should_output_command_files = true;
+    if let Ok(env) = std::env::var("RUST_BACKTRACE") {
+        if env != "full" {
+            should_output_command_files = false;
+        }
+    }
+    if should_output_command_files {
+        if let Err(e) = lib_obj.handle_commands(module_name, &item_name) {
+            panic!("{}", e);
+        }
     }
 
     input_type.apply_library_obj_changes(lib_obj);
