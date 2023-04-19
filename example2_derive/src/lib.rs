@@ -494,6 +494,8 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     pub struct LibraryObj {
         pub compiler_error_message: String,
         pub add_code_after: Vec<String>,
+        /// crate_name is read only. modifying this has no effect.
+        pub crate_name: String,
         pub user_data: UserData,
         pub pre_build_cmds: Vec<String>,
         pub build_cmds: Vec<String>,
@@ -804,6 +806,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
 
     let mut pass_this = LibraryObj::default();
     pass_this.user_data = (&input_type).into();
+    pass_this.crate_name = std::env::var("CARGO_CRATE_NAME").unwrap_or("".into());
     let mut add_to_code = LibraryObj::include_in_rs_wasm();
     add_to_code.push_str(LibraryObj::gen_entrypoint());
     add_to_code.push_str(WASM_PARSING_TRAIT_STR);
