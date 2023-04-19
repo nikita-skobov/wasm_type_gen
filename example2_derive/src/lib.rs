@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::{path::PathBuf, io::Write};
 use std::str::FromStr;
 use toml::Table;
@@ -37,6 +38,99 @@ fn get_wasm_base_dir() -> String {
     let base_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into());
     let base_dir = format!("{base_dir}/wasm_modules");
     base_dir
+}
+
+fn get_wasmgen_base_dir() -> String {
+    let base_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into());
+    format!("{base_dir}/wasmgen")
+}
+
+fn should_do_file_operations() -> bool {
+    // through manual testing i've found that running cargo build uses RUST_BACKTRACE full
+    // whereas the cargo command used by IDEs sets this to short. basically: dont output command
+    // files every keystroke.. instead we only wish to do this when the user actually builds.
+    let mut should_do = false;
+    if let Ok(env) = std::env::var("RUST_BACKTRACE") {
+        if env == "full" {
+            should_do = true;
+        }
+    }
+    // check for optional env vars set by users:
+    if let Ok(env) = std::env::var("CARGO_WASMTYPEGEN_FILEOPS") {
+        if env == "false" || env == "0" {
+            should_do = false;
+        } else if env == "true" || env == "1" {
+            should_do = true;
+        }
+    }
+    should_do
+}
+
+/// recursively delete the module folder while respecting the persist paths.
+/// level must be 0 when calling this at first because the structure of the wasm module folder
+/// is: wasm_module_name/users_type
+/// so there can be many users_type folders within a wasm module, and we want to preserve the users_type folders
+/// ie: we only actually delete if we are not at level=0
+fn recurse_and_clear_module_folder<S: AsRef<Path>>(
+    p: S,
+    level: usize,
+    persist_paths: &Vec<String>,
+) -> std::io::Result<()> {
+    let readdir = std::fs::read_dir(p.as_ref())?;
+    for next in readdir {
+        let entry = match next {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let ty = entry.file_type()?;
+        // if we're at the root of the module folder, just recurse. dont delete the
+        // user type folders:
+        if level == 0 {
+            if ty.is_dir() {
+                recurse_and_clear_module_folder(&path, level + 1, persist_paths)?;
+                // we finished reading the user type folder: is it empty? if so, no point in
+                // keeping an empty folder, so just delete it.
+                if let Ok(mut readdir2) = path.read_dir() {
+                    if readdir2.next().is_none() {
+                        // its empty, so delete it
+                        let _ = std::fs::remove_dir(path);
+                    }
+                }
+            }
+            // regardless of if its a file, or a dir, we are at level 0
+            // so dont delete these.
+            continue;
+        }
+        // ignore errors if we fail to delete something. this is an optimistic operation
+        // and it doesnt make sense to fail. worst case is these files will be overridden, and
+        // some files persist unnecessarily.
+        let should_delete = !persist_paths.contains(&name);
+        match (should_delete, ty.is_dir()) {
+            (true, true) => {                
+                let _ = std::fs::remove_dir_all(path);
+            }
+            (true, false) => {
+                let _ = std::fs::remove_file(path);
+            }
+            // no matter if its a dir or a file, if we want to persist this path, then
+            // theres no point in recursivng
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+/// recursively iterate the wasm module's folder and delete everything that doesnt match
+/// one of the persist paths
+fn delete_wasm_module_folder(wasm_module_name: &str, persist_paths: Vec<String>) -> std::io::Result<()> {
+    let base_dir = get_wasmgen_base_dir();
+    let path = format!("{base_dir}/{wasm_module_name}");
+    // println!("GOING TO DELETE {path}");
+    recurse_and_clear_module_folder(PathBuf::from(path), 0, &persist_paths)?;
+    Ok(())
 }
 
 #[proc_macro]
@@ -149,6 +243,47 @@ pub fn wasm_modules(items: proc_macro::TokenStream) -> proc_macro::TokenStream {
         if let Some(requireds) = reqs {
             required_crates.push((original_path.clone(), requireds));
         }
+        // wasm modules can create files within the folder we generate for them. they can request to persist
+        // certain file names/directories that are exact matches
+        let persist_paths = parsed_wasm_code.items.iter().find_map(|item| {
+            if let syn::Item::Const(c) = item {
+                if c.ident.to_string() == "PERSIST_PATHS" {
+                    let arr = match &*c.expr {
+                        syn::Expr::Array(arr) => arr,
+                        syn::Expr::Reference(r) => {
+                            if let syn::Expr::Array(arr) = &*r.expr {
+                                arr
+                            } else {
+                                return None;
+                            }
+                        }
+                        _ => {
+                            return None;
+                        }
+                    };
+                    let mut out: Vec<String> = vec![];
+                    for item in arr.elems.iter() {
+                        if let syn::Expr::Lit(l) = item {
+                            if let syn::Lit::Str(s) = &l.lit {
+                                let mut s = s.token().to_string();
+                                while s.starts_with('"') && s.ends_with('"') {
+                                    s.remove(0);
+                                    s.pop();
+                                }
+                                out.push(s);
+                            }
+                        }
+                    }
+                    return Some(out);
+                }
+            }
+            None
+        }).unwrap_or_default();
+        let should_delete_wasm_module_folder = should_do_file_operations();
+        if should_delete_wasm_module_folder {
+            let _ = delete_wasm_module_folder(&path_name, persist_paths);
+        }
+
         // search the file again and export its type inline:
         let export_item = parsed_wasm_code.items.iter().find(|thing| {
             match thing {
@@ -364,6 +499,8 @@ fn merge_commands(
 /// - no command contains newlines (dont confuse the user + easier to verify)
 /// - add a reserved comment to the beginning explaining where this command(s) came from
 fn verify_cmd_vec(
+    base_dir: &str,
+    wasmgen_base_dir: &str,
     wasm_module_name: &str,
     user_type_name: &str,
     cmds: &mut Vec<String>
@@ -394,7 +531,9 @@ fn verify_cmd_vec(
         }
         cmd.push('\n');
     }
+    cmds.insert(0, format!("cd {wasmgen_base_dir}/{wasm_module_name}/{user_type_name}\n"));
     cmds.insert(0, format!("# wasm_module({wasm_module_name}) => {user_type_name}:\n"));
+    cmds.push(format!("cd {base_dir}/\n"));
     cmds.push("\n".into());
     Ok(())
 }
@@ -428,13 +567,14 @@ fn output_command_files(
 ) -> Result<(), String> {
     let base_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into());
     let deploy_file = format!("{base_dir}/deploy.sh");
+    let base_gen_dir = get_wasmgen_base_dir();
 
     // verify and add comments:
-    verify_cmd_vec(wasm_module_name, user_type_name, &mut pre_build_cmds)?;
-    verify_cmd_vec(wasm_module_name, user_type_name, &mut build_cmds)?;
-    verify_cmd_vec(wasm_module_name, user_type_name, &mut package_cmds)?;
-    verify_cmd_vec(wasm_module_name, user_type_name, &mut deploy_cmds)?;
-    verify_cmd_vec(wasm_module_name, user_type_name, &mut post_deploy_cmds)?;
+    verify_cmd_vec(&base_dir, &base_gen_dir, wasm_module_name, user_type_name, &mut pre_build_cmds)?;
+    verify_cmd_vec(&base_dir, &base_gen_dir, wasm_module_name, user_type_name, &mut build_cmds)?;
+    verify_cmd_vec(&base_dir, &base_gen_dir, wasm_module_name, user_type_name, &mut package_cmds)?;
+    verify_cmd_vec(&base_dir, &base_gen_dir, wasm_module_name, user_type_name, &mut deploy_cmds)?;
+    verify_cmd_vec(&base_dir, &base_gen_dir, wasm_module_name, user_type_name, &mut post_deploy_cmds)?;
 
     merge_commands(&mut pre_build_cmds, &mut build_cmds, &mut package_cmds, &mut deploy_cmds, &mut post_deploy_cmds);
 
@@ -800,9 +940,17 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         None => panic!("Module '{}' is missing a valid ExportType. Expected to find statement like `pub type ExportType = SomeStruct;`", module_path)
     };
 
+    let should_output_command_files = should_do_file_operations();
     // this is necessary to allow the compile function to find previously compiled versions in case it fails to compile.
     // it groups it by this "item_hash".
     let item_name = input_type.get_name();
+
+    if should_output_command_files {
+        // create the wasm module folder so it can output files there optionally:
+        let wasmgen_dir = get_wasmgen_base_dir();
+        let path = format!("{wasmgen_dir}/{module_name}/{item_name}");
+        let _ = std::fs::create_dir_all(path);
+    }
 
     let mut pass_this = LibraryObj::default();
     pass_this.user_data = (&input_type).into();
@@ -849,7 +997,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         Some(add_to_code), 
         &pass_this
     ).unwrap_or_default();
-    println!("GOT BACK FROM WASM:\n{:#?}", lib_obj);
+    // println!("GOT BACK FROM WASM:\n{:#?}", lib_obj);
 
     if !lib_obj.compiler_error_message.is_empty() {
         // TODO: currently we just add a compile_error to the end of the stream..
@@ -872,15 +1020,6 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         add_after.push(tokens);
     }
 
-    // through manual testing i've found that running cargo build uses RUST_BACKTRACE full
-    // whereas the cargo command used by IDEs sets this to short. basically: dont output command
-    // files every keystroke.. instead we only wish to do this when the user actually builds.
-    let mut should_output_command_files = true;
-    if let Ok(env) = std::env::var("RUST_BACKTRACE") {
-        if env != "full" {
-            should_output_command_files = false;
-        }
-    }
     if should_output_command_files {
         if let Err(e) = lib_obj.handle_commands(module_name, &item_name) {
             panic!("{}", e);
