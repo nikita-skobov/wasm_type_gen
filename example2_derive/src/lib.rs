@@ -2,6 +2,7 @@ use std::path::Path;
 use std::{path::PathBuf, io::Write};
 use std::str::FromStr;
 use toml::Table;
+use path_clean::clean;
 
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
@@ -592,6 +593,24 @@ fn output_command_files(
     Ok(())
 }
 
+fn output_generated_file(
+    wasm_module_name: &str,
+    user_type_name: &str,
+    file_name: String,
+    file_data: Vec<u8>
+) -> Result<(), String> {
+    let expected_base = get_wasmgen_base_dir();
+    let expected_base = PathBuf::from(format!("{expected_base}/{wasm_module_name}/{user_type_name}/"));
+    let mut output_path = expected_base.clone();
+    output_path.push(&file_name);
+    let output_path = clean(output_path);
+    // ensure that generated files from wasm modules are only allowed to output files in the directory we create for them
+    if !output_path.starts_with(expected_base) {
+        return Err(format!("Wasm module '{wasm_module_name}' attempted to output a file '{file_name}' outside of its directory"));
+    }
+    std::fs::write(&output_path, file_data).map_err(|e| format!("Failed to output file {:?}\nError:\n{:?}", output_path, e))?;
+    Ok(())
+}
 
 #[proc_macro_attribute]
 pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -630,6 +649,12 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         pub ty: String,
     }
 
+    #[derive(WasmTypeGen, Debug)]
+    pub struct FileOut {
+        pub name: String,
+        pub data: Vec<u8>,
+    }
+
     #[derive(WasmTypeGen, Debug, Default)]
     pub struct LibraryObj {
         pub compiler_error_message: String,
@@ -642,9 +667,13 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         pub package_cmds: Vec<String>,
         pub deploy_cmds: Vec<String>,
         pub post_deploy_cmds: Vec<String>,
+        pub output_files: Vec<FileOut>,
     }
     impl LibraryObj {
-        pub fn handle_commands(&mut self, wasm_module_name: &str, user_type_name: &str) -> Result<(), String> {
+        pub fn handle_file_ops(&mut self, wasm_module_name: &str, user_type_name: &str) -> Result<(), String> {
+            for file in self.output_files.drain(..) {
+                output_generated_file(wasm_module_name, user_type_name, file.name, file.data)?;
+            }
             output_command_files(
                 wasm_module_name, user_type_name,
                 std::mem::take(&mut self.pre_build_cmds),
@@ -761,6 +790,9 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         }
         fn add_post_deploy_cmd(&mut self, cmd: String) {
             self.post_deploy_cmds.push(cmd);
+        }
+        fn output_file(&mut self, name: String, data: Vec<u8>) {
+            self.output_files.push(FileOut { name, data });
         }
     }
     #[output_and_stringify_basic(user_data_extra_impl)]
@@ -1021,7 +1053,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     }
 
     if should_output_command_files {
-        if let Err(e) = lib_obj.handle_commands(module_name, &item_name) {
+        if let Err(e) = lib_obj.handle_file_ops(module_name, &item_name) {
             panic!("{}", e);
         }
     }
