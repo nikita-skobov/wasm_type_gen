@@ -460,38 +460,66 @@ fn set_visibility(vis: &mut Visibility, is_pub: bool) {
     }
 }
 
+fn merge_command_vec(
+    original: Vec<Result<String, String>>,
+    shared: &mut Vec<String>
+) {
+    let shared_len_before = shared.len();
+    for cmd in original {
+        match cmd {
+            Ok(s) => {
+                shared.push(s);
+            }
+            Err(s) => {
+                if !shared.contains(&s) {
+                    shared.push(s);
+                }
+            }
+        }
+    }
+    // this is kinda hacky:
+    // the point of this is if we filter out all of the strings that
+    // the user marked as unique, and we find that all that is left are 3
+    // command lines, then those correspond to:
+    // #comment
+    // cd dir/
+    // cd back/
+    // {newline}
+    // and that isnt useful to output, so we check that condition here simply
+    // by the length of the output and truncate if its 4 more than it was
+    if shared.len() == shared_len_before + 4 {
+        shared.truncate(shared_len_before);
+    }
+}
+
 /// read the existing commands output by previous wasm module invocations
 /// and merge the current commands with the previous ones such that the previous ones are first
 /// in the vector. After returning, the vectors provided will contain the current
 /// state of the deploy.sh file and can be output to file one item at a time.
+/// the params are Vec<Result<String, String>> where Ok(String) represents
+/// that we should just add the string as is, but Err(String) means
+/// we only add that string if its unique
 fn merge_commands(
-    pre_build_cmds: &mut Vec<String>,
-    build_cmds: &mut Vec<String>,
-    package_cmds: &mut Vec<String>,
-    deploy_cmds: &mut Vec<String>,
-    post_deploy_cmds: &mut Vec<String>,
-) {
+    pre_build_cmds: Vec<Result<String, String>>,
+    build_cmds: Vec<Result<String, String>>,
+    package_cmds: Vec<Result<String, String>>,
+    deploy_cmds: Vec<Result<String, String>>,
+    post_deploy_cmds: Vec<Result<String, String>>,
+) -> [Vec<String>; 5] {
     unsafe {
-        // append new data to the existing data.
-        // we use mem::take to avoid iterating and extra copying
-        let stolen = std::mem::take(pre_build_cmds);
-        PRE_BUILD_CMDS.extend(stolen);
-        let stolen = std::mem::take(build_cmds);
-        BUILD_CMDS.extend(stolen);
-        let stolen = std::mem::take(package_cmds);
-        PACKAGE_CMDS.extend(stolen);
-        let stolen = std::mem::take(deploy_cmds);
-        DEPLOY_CMDS.extend(stolen);
-        let stolen = std::mem::take(post_deploy_cmds);
-        POST_DEPLOY_CMDS.extend(stolen);
+        merge_command_vec(pre_build_cmds, &mut PRE_BUILD_CMDS);
+        merge_command_vec(build_cmds, &mut BUILD_CMDS);
+        merge_command_vec(package_cmds, &mut PACKAGE_CMDS);
+        merge_command_vec(deploy_cmds, &mut DEPLOY_CMDS);
+        merge_command_vec(post_deploy_cmds, &mut POST_DEPLOY_CMDS);
 
-        // we do have to do 1 big copy though and that is to fill the passed
-        // in mutable vectors back with the current state of all the commands:
-        *pre_build_cmds = PRE_BUILD_CMDS.clone();
-        *build_cmds = BUILD_CMDS.clone();
-        *package_cmds = PACKAGE_CMDS.clone();
-        *deploy_cmds = DEPLOY_CMDS.clone();
-        *post_deploy_cmds = POST_DEPLOY_CMDS.clone();
+        [
+            PRE_BUILD_CMDS.clone(),
+            BUILD_CMDS.clone(),
+            PACKAGE_CMDS.clone(),
+            DEPLOY_CMDS.clone(),
+            POST_DEPLOY_CMDS.clone(),
+        ]
     }
 }
 
@@ -504,7 +532,7 @@ fn verify_cmd_vec(
     wasmgen_base_dir: &str,
     wasm_module_name: &str,
     user_type_name: &str,
-    cmds: &mut Vec<String>
+    cmds: &mut Vec<Result<String, String>>
 ) -> Result<(), String> {
     // no point in doing anything if there's no commands
     if cmds.is_empty() { return Ok(()) }
@@ -518,6 +546,10 @@ fn verify_cmd_vec(
     ];
 
     for cmd in cmds.iter_mut() {
+        let cmd = match cmd {
+            Ok(s) => s,
+            Err(s) => s,
+        };
         if cmd.contains("\n") {
             return Err(format!("Wasm module '{wasm_module_name}' attempted to output a shell command with a newline while reading '{user_type_name}'. shell commands with newlines are not supported. Please verify the usage of this module"));
         }
@@ -532,10 +564,10 @@ fn verify_cmd_vec(
         }
         cmd.push('\n');
     }
-    cmds.insert(0, format!("cd {wasmgen_base_dir}/{wasm_module_name}/{user_type_name}\n"));
-    cmds.insert(0, format!("# wasm_module({wasm_module_name}) => {user_type_name}:\n"));
-    cmds.push(format!("cd {base_dir}/\n"));
-    cmds.push("\n".into());
+    cmds.insert(0, Ok(format!("cd {wasmgen_base_dir}/{wasm_module_name}/{user_type_name}\n")));
+    cmds.insert(0, Ok(format!("# wasm_module({wasm_module_name}) => {user_type_name}:\n")));
+    cmds.push(Ok(format!("cd {base_dir}/\n")));
+    cmds.push(Ok("\n".into()));
     Ok(())
 }
 
@@ -560,11 +592,11 @@ fn append_to_file(
 fn output_command_files(
     wasm_module_name: &str,
     user_type_name: &str,
-    mut pre_build_cmds: Vec<String>,
-    mut build_cmds: Vec<String>,
-    mut package_cmds: Vec<String>,
-    mut deploy_cmds: Vec<String>,
-    mut post_deploy_cmds: Vec<String>,
+    mut pre_build_cmds: Vec<Result<String, String>>,
+    mut build_cmds: Vec<Result<String, String>>,
+    mut package_cmds: Vec<Result<String, String>>,
+    mut deploy_cmds: Vec<Result<String, String>>,
+    mut post_deploy_cmds: Vec<Result<String, String>>,
 ) -> Result<(), String> {
     let base_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into());
     let deploy_file = format!("{base_dir}/deploy.sh");
@@ -577,7 +609,13 @@ fn output_command_files(
     verify_cmd_vec(&base_dir, &base_gen_dir, wasm_module_name, user_type_name, &mut deploy_cmds)?;
     verify_cmd_vec(&base_dir, &base_gen_dir, wasm_module_name, user_type_name, &mut post_deploy_cmds)?;
 
-    merge_commands(&mut pre_build_cmds, &mut build_cmds, &mut package_cmds, &mut deploy_cmds, &mut post_deploy_cmds);
+    let [
+        pre_build_cmds,
+        build_cmds,
+        package_cmds,
+        deploy_cmds,
+        post_deploy_cmds,
+    ] = merge_commands(pre_build_cmds, build_cmds, package_cmds, deploy_cmds, post_deploy_cmds);
 
     // open in overwrite mode
     let mut f = std::fs::File::create(&deploy_file)
@@ -655,6 +693,12 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         pub data: Vec<u8>,
     }
 
+    #[derive(WasmTypeGen, Debug)]
+    pub enum StringOrUnique {
+        String(String),
+        Unique(String),
+    }
+
     #[derive(WasmTypeGen, Debug, Default)]
     pub struct LibraryObj {
         pub compiler_error_message: String,
@@ -662,13 +706,23 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         /// crate_name is read only. modifying this has no effect.
         pub crate_name: String,
         pub user_data: UserData,
-        pub pre_build_cmds: Vec<String>,
-        pub build_cmds: Vec<String>,
-        pub package_cmds: Vec<String>,
-        pub deploy_cmds: Vec<String>,
-        pub post_deploy_cmds: Vec<String>,
+        pub pre_build_cmds: Vec<StringOrUnique>,
+        pub build_cmds: Vec<StringOrUnique>,
+        pub package_cmds: Vec<StringOrUnique>,
+        pub deploy_cmds: Vec<StringOrUnique>,
+        pub post_deploy_cmds: Vec<StringOrUnique>,
         pub output_files: Vec<FileOut>,
     }
+
+    fn string_unique_to_result(mut v: Vec<StringOrUnique>) -> Vec<Result<String, String>> {
+        v.drain(..).map(|x| {
+            match x {
+                StringOrUnique::String(s) => Ok(s),
+                StringOrUnique::Unique(s) => Err(s),
+            }
+        }).collect()
+    }
+
     impl LibraryObj {
         pub fn handle_file_ops(&mut self, wasm_module_name: &str, user_type_name: &str) -> Result<(), String> {
             for file in self.output_files.drain(..) {
@@ -676,11 +730,11 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
             }
             output_command_files(
                 wasm_module_name, user_type_name,
-                std::mem::take(&mut self.pre_build_cmds),
-                std::mem::take(&mut self.build_cmds),
-                std::mem::take(&mut self.package_cmds),
-                std::mem::take(&mut self.deploy_cmds),
-                std::mem::take(&mut self.post_deploy_cmds),
+                string_unique_to_result(std::mem::take(&mut self.pre_build_cmds)),
+                string_unique_to_result(std::mem::take(&mut self.build_cmds)),
+                string_unique_to_result(std::mem::take(&mut self.package_cmds)),
+                string_unique_to_result(std::mem::take(&mut self.deploy_cmds)),
+                string_unique_to_result(std::mem::take(&mut self.post_deploy_cmds)),
             )
         }
     }
@@ -777,19 +831,34 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
             self.compiler_error_message = err_msg.into();
         }
         fn add_pre_build_cmd(&mut self, cmd: String) {
-            self.pre_build_cmds.push(cmd);
+            self.pre_build_cmds.push(StringOrUnique::String(cmd));
         }
         fn add_build_cmd(&mut self, cmd: String) {
-            self.build_cmds.push(cmd);
+            self.build_cmds.push(StringOrUnique::String(cmd));
         }
         fn add_package_cmd(&mut self, cmd: String) {
-            self.package_cmds.push(cmd);
+            self.package_cmds.push(StringOrUnique::String(cmd));
         }
         fn add_deploy_cmd(&mut self, cmd: String) {
-            self.deploy_cmds.push(cmd);
+            self.deploy_cmds.push(StringOrUnique::String(cmd));
         }
         fn add_post_deploy_cmd(&mut self, cmd: String) {
-            self.post_deploy_cmds.push(cmd);
+            self.post_deploy_cmds.push(StringOrUnique::String(cmd));
+        }
+        fn add_pre_build_cmd_unique(&mut self, cmd: String) {
+            self.pre_build_cmds.push(StringOrUnique::Unique(cmd));
+        }
+        fn add_build_cmd_unique(&mut self, cmd: String) {
+            self.build_cmds.push(StringOrUnique::Unique(cmd));
+        }
+        fn add_package_cmd_unique(&mut self, cmd: String) {
+            self.package_cmds.push(StringOrUnique::Unique(cmd));
+        }
+        fn add_deploy_cmd_unique(&mut self, cmd: String) {
+            self.deploy_cmds.push(StringOrUnique::Unique(cmd));
+        }
+        fn add_post_deploy_cmd_unique(&mut self, cmd: String) {
+            self.post_deploy_cmds.push(StringOrUnique::Unique(cmd));
         }
         fn output_file(&mut self, name: String, data: Vec<u8>) {
             self.output_files.push(FileOut { name, data });
