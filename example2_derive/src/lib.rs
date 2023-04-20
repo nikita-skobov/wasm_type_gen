@@ -28,12 +28,13 @@ use syn::{
 use quote::{quote, format_ident, ToTokens};
 use wasm_type_gen::*;
 
-// TODO: need to use locking? i think proc-macros run single threaded always so unsure if thats required...
-static mut PRE_BUILD_CMDS: Vec<String> = vec![];
-static mut BUILD_CMDS: Vec<String> = vec![];
-static mut PACKAGE_CMDS: Vec<String> = vec![];
-static mut DEPLOY_CMDS: Vec<String> = vec![];
-static mut POST_DEPLOY_CMDS: Vec<String> = vec![];
+// TODO: need to use locking? proc-macros run single threaded so i think this is safe?
+static mut SHARED_FILE_DATA: Vec<MapEntry<MapEntry<String>>> = vec![];
+
+struct MapEntry<T> {
+    pub key: String,
+    pub lines: Vec<T>,
+}
 
 fn get_wasm_base_dir() -> String {
     let base_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into());
@@ -492,145 +493,6 @@ fn merge_command_vec(
     }
 }
 
-/// read the existing commands output by previous wasm module invocations
-/// and merge the current commands with the previous ones such that the previous ones are first
-/// in the vector. After returning, the vectors provided will contain the current
-/// state of the deploy.sh file and can be output to file one item at a time.
-/// the params are Vec<Result<String, String>> where Ok(String) represents
-/// that we should just add the string as is, but Err(String) means
-/// we only add that string if its unique
-fn merge_commands(
-    pre_build_cmds: Vec<Result<String, String>>,
-    build_cmds: Vec<Result<String, String>>,
-    package_cmds: Vec<Result<String, String>>,
-    deploy_cmds: Vec<Result<String, String>>,
-    post_deploy_cmds: Vec<Result<String, String>>,
-) -> [Vec<String>; 5] {
-    unsafe {
-        merge_command_vec(pre_build_cmds, &mut PRE_BUILD_CMDS);
-        merge_command_vec(build_cmds, &mut BUILD_CMDS);
-        merge_command_vec(package_cmds, &mut PACKAGE_CMDS);
-        merge_command_vec(deploy_cmds, &mut DEPLOY_CMDS);
-        merge_command_vec(post_deploy_cmds, &mut POST_DEPLOY_CMDS);
-
-        [
-            PRE_BUILD_CMDS.clone(),
-            BUILD_CMDS.clone(),
-            PACKAGE_CMDS.clone(),
-            DEPLOY_CMDS.clone(),
-            POST_DEPLOY_CMDS.clone(),
-        ]
-    }
-}
-
-/// iterate over the commands that the user's wasm module returned and ensure that:
-/// - no command contains reserved comments (dont confuse the user)
-/// - no command contains newlines (dont confuse the user + easier to verify)
-/// - add a reserved comment to the beginning explaining where this command(s) came from
-fn verify_cmd_vec(
-    base_dir: &str,
-    wasmgen_base_dir: &str,
-    wasm_module_name: &str,
-    user_type_name: &str,
-    cmds: &mut Vec<Result<String, String>>
-) -> Result<(), String> {
-    // no point in doing anything if there's no commands
-    if cmds.is_empty() { return Ok(()) }
-    let reserved = [
-        "# wasm_module",
-        "# pre-build",
-        "# build",
-        "# package",
-        "# deploy",
-        "# post-build"
-    ];
-
-    for cmd in cmds.iter_mut() {
-        let cmd = match cmd {
-            Ok(s) => s,
-            Err(s) => s,
-        };
-        if cmd.contains("\n") {
-            return Err(format!("Wasm module '{wasm_module_name}' attempted to output a shell command with a newline while reading '{user_type_name}'. shell commands with newlines are not supported. Please verify the usage of this module"));
-        }
-        for r in reserved {
-            if cmd.contains(r) {
-                return Err(format!("Wasm module '{wasm_module_name}' attempted to output a shell command with a reserved keyword '{r}' while reading '{user_type_name}'."));
-            }
-        }
-        *cmd = cmd.trim().to_string();
-        if cmd.is_empty() {
-            return Err(format!("Wasm module '{wasm_module_name}' attempted to output an empty line shell command while reading '{user_type_name}'. empty lines in shell commands are not supported."));
-        }
-        cmd.push('\n');
-    }
-    cmds.insert(0, Ok(format!("cd {wasmgen_base_dir}/{wasm_module_name}/{user_type_name}\n")));
-    cmds.insert(0, Ok(format!("# wasm_module({wasm_module_name}) => {user_type_name}:\n")));
-    cmds.push(Ok(format!("cd {base_dir}/\n")));
-    cmds.push(Ok("\n".into()));
-    Ok(())
-}
-
-fn append_to_file(
-    f: &mut std::fs::File,
-    comment: &str,
-    data: Vec<String>,
-) -> Result<(), String> {
-    if data.is_empty() { return Ok(()) }
-
-    let err_cb = |e: std::io::Error| {
-        format!("Failed to write to deploy.sh file\n{:?}", e)
-    };
-    f.write_all(comment.as_bytes()).map_err(err_cb)?;
-    for line in data {
-        f.write_all(line.as_bytes()).map_err(err_cb)?;
-    }
-    f.write_all(b"\n\n").map_err(err_cb)?;
-    Ok(())
-}
-
-fn output_command_files(
-    wasm_module_name: &str,
-    user_type_name: &str,
-    mut pre_build_cmds: Vec<Result<String, String>>,
-    mut build_cmds: Vec<Result<String, String>>,
-    mut package_cmds: Vec<Result<String, String>>,
-    mut deploy_cmds: Vec<Result<String, String>>,
-    mut post_deploy_cmds: Vec<Result<String, String>>,
-) -> Result<(), String> {
-    let base_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into());
-    let deploy_file = format!("{base_dir}/deploy.sh");
-    let base_gen_dir = get_wasmgen_base_dir();
-
-    // verify and add comments:
-    verify_cmd_vec(&base_dir, &base_gen_dir, wasm_module_name, user_type_name, &mut pre_build_cmds)?;
-    verify_cmd_vec(&base_dir, &base_gen_dir, wasm_module_name, user_type_name, &mut build_cmds)?;
-    verify_cmd_vec(&base_dir, &base_gen_dir, wasm_module_name, user_type_name, &mut package_cmds)?;
-    verify_cmd_vec(&base_dir, &base_gen_dir, wasm_module_name, user_type_name, &mut deploy_cmds)?;
-    verify_cmd_vec(&base_dir, &base_gen_dir, wasm_module_name, user_type_name, &mut post_deploy_cmds)?;
-
-    let [
-        pre_build_cmds,
-        build_cmds,
-        package_cmds,
-        deploy_cmds,
-        post_deploy_cmds,
-    ] = merge_commands(pre_build_cmds, build_cmds, package_cmds, deploy_cmds, post_deploy_cmds);
-
-    // open in overwrite mode
-    let mut f = std::fs::File::create(&deploy_file)
-        .map_err(|e| format!("Failed to create deploy.sh file\nError:\n{:?}", e))?;
-
-    // output structured deploy.sh file
-    append_to_file(&mut f, "# pre-build:\n", pre_build_cmds)?;
-    append_to_file(&mut f, "# build:\n", build_cmds)?;
-    append_to_file(&mut f, "# package:\n", package_cmds)?;
-    append_to_file(&mut f, "# deploy:\n", deploy_cmds)?;
-    append_to_file(&mut f, "# post-deploy:\n", post_deploy_cmds)?;
-
-    Ok(())
-}
-
 fn output_generated_file(
     wasm_module_name: &str,
     user_type_name: &str,
@@ -647,6 +509,87 @@ fn output_generated_file(
         return Err(format!("Wasm module '{wasm_module_name}' attempted to output a file '{file_name}' outside of its directory"));
     }
     std::fs::write(&output_path, file_data).map_err(|e| format!("Failed to output file {:?}\nError:\n{:?}", output_path, e))?;
+    Ok(())
+}
+
+fn merge_shared_files(
+    wasm_module_name: &str,
+    data: Vec<MapEntry<MapEntry<(bool, String)>>>    
+) -> Result<(), String> {
+    unsafe {
+        // merge the current data with the previous data
+        for entry in data {
+            let file_name = entry.key;
+            // this is how we enforce that shared files only get output
+            // to the shared directory. basically: it can only be a file name, not a path.
+            if file_name.contains("/") || file_name.contains("\\") {
+                return Err(format!("Wasm module '{wasm_module_name}' attempted to output a shared file outside the shared file directory {:?}", file_name));
+            }
+            for file_data in entry.lines {
+                let label = file_data.key;
+
+                let label_entry = if let Some(e) = SHARED_FILE_DATA.iter_mut().find(|x| x.key == file_name) {
+                    if let Some(l) = e.lines.iter_mut().find(|x| x.key == label) {
+                        l
+                    } else {
+                        let index = e.lines.len();
+                        e.lines.push(MapEntry { key: label.clone(), lines: vec![] });
+                        &mut e.lines[index]
+                    }
+                } else {
+                    let index = SHARED_FILE_DATA.len();
+                    SHARED_FILE_DATA.push(MapEntry { key: file_name.clone(), lines: vec![MapEntry { key: label.clone(), lines: vec![] }] });
+                    &mut SHARED_FILE_DATA[index].lines[0]
+                };
+
+                for (unique, line) in file_data.lines {
+                    if unique {
+                        if !label_entry.lines.contains(&line) {
+                            label_entry.lines.push(line);
+                        }
+                    } else {
+                        label_entry.lines.push(line);
+                    }
+                }
+            }
+        }
+    
+        Ok(())
+    }
+}
+
+fn output_shared_files(
+    wasm_module_name: &str,
+    data: Vec<MapEntry<MapEntry<(bool, String)>>>
+) -> Result<(), String> {
+    // set the wasm_module's data into the global shared data object.
+    merge_shared_files(wasm_module_name, data)?;
+    // iterate the shared data object and output to the shared file(s)
+
+    let shared_dir = get_wasmgen_base_dir();
+
+    unsafe {
+        for file_entry in SHARED_FILE_DATA.iter_mut() {
+            let file_name = &file_entry.key;
+            let file_path = format!("{shared_dir}/{file_name}");
+            let mut out_f = std::fs::File::create(&file_path)
+                .map_err(|e| format!("Failed to create/open file while running module '{wasm_module_name}' {:?}\nError:\n{:?}", file_path, e))?;
+
+            // sort the labels alphabetically
+            file_entry.lines.sort_by(|a, b| a.key.cmp(&b.key));
+
+            for label_entry in file_entry.lines.iter() {
+                let label = &label_entry.key;
+                out_f.write_all(label.as_bytes()).map_err(|e| format!("Failed to write to file while running module '{wasm_module_name}' {:?}\nError:\n{:?}", file_path, e))?;
+                out_f.write_all(b"\n").map_err(|e| format!("Failed to write to file while running module '{wasm_module_name}' {:?}\nError:\n{:?}", file_path, e))?;
+                for line in label_entry.lines.iter() {
+                    out_f.write_all(line.as_bytes()).map_err(|e| format!("Failed to write to file while running module '{wasm_module_name}' {:?}\nError:\n{:?}", file_path, e))?;
+                    out_f.write_all(b"\n").map_err(|e| format!("Failed to write to file while running module '{wasm_module_name}' {:?}\nError:\n{:?}", file_path, e))?;
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -694,9 +637,11 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     }
 
     #[derive(WasmTypeGen, Debug)]
-    pub enum StringOrUnique {
-        String(String),
-        Unique(String),
+    pub struct SharedOutputEntry {
+        pub filename: String,
+        pub label: String,
+        pub line: String,
+        pub unique: bool,
     }
 
     #[derive(WasmTypeGen, Debug, Default)]
@@ -706,21 +651,27 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         /// crate_name is read only. modifying this has no effect.
         pub crate_name: String,
         pub user_data: UserData,
-        pub pre_build_cmds: Vec<StringOrUnique>,
-        pub build_cmds: Vec<StringOrUnique>,
-        pub package_cmds: Vec<StringOrUnique>,
-        pub deploy_cmds: Vec<StringOrUnique>,
-        pub post_deploy_cmds: Vec<StringOrUnique>,
         pub output_files: Vec<FileOut>,
+        pub shared_output_data: Vec<SharedOutputEntry>,
     }
 
-    fn string_unique_to_result(mut v: Vec<StringOrUnique>) -> Vec<Result<String, String>> {
-        v.drain(..).map(|x| {
-            match x {
-                StringOrUnique::String(s) => Ok(s),
-                StringOrUnique::Unique(s) => Err(s),
+    fn to_map_entry(data: Vec<SharedOutputEntry>) -> Vec<MapEntry<MapEntry<(bool, String)>>> {
+        let mut map_entries: Vec<MapEntry<MapEntry<(bool, String)>>> = vec![];
+        for d in data {
+            if let Some(m) = map_entries.iter_mut().find(|x| x.key == d.filename) {
+                if let Some(m) = m.lines.iter_mut().find(|x| x.key == d.label) {
+                    m.lines.push((d.unique, d.line));
+                } else {
+                    m.lines.push(MapEntry { key: d.label, lines: vec![(d.unique, d.line)] });
+                }
+            } else {
+                map_entries.push(MapEntry { key: d.filename, lines: vec![MapEntry {
+                    key: d.label,
+                    lines: vec![(d.unique, d.line)],
+                }] })
             }
-        }).collect()
+        }
+        map_entries
     }
 
     impl LibraryObj {
@@ -728,14 +679,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
             for file in self.output_files.drain(..) {
                 output_generated_file(wasm_module_name, user_type_name, file.name, file.data)?;
             }
-            output_command_files(
-                wasm_module_name, user_type_name,
-                string_unique_to_result(std::mem::take(&mut self.pre_build_cmds)),
-                string_unique_to_result(std::mem::take(&mut self.build_cmds)),
-                string_unique_to_result(std::mem::take(&mut self.package_cmds)),
-                string_unique_to_result(std::mem::take(&mut self.deploy_cmds)),
-                string_unique_to_result(std::mem::take(&mut self.post_deploy_cmds)),
-            )
+            output_shared_files(wasm_module_name, to_map_entry(std::mem::take(&mut self.shared_output_data)))
         }
     }
 
@@ -830,38 +774,40 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         fn compile_error(&mut self, err_msg: &str) {
             self.compiler_error_message = err_msg.into();
         }
-        fn add_pre_build_cmd(&mut self, cmd: String) {
-            self.pre_build_cmds.push(StringOrUnique::String(cmd));
-        }
-        fn add_build_cmd(&mut self, cmd: String) {
-            self.build_cmds.push(StringOrUnique::String(cmd));
-        }
-        fn add_package_cmd(&mut self, cmd: String) {
-            self.package_cmds.push(StringOrUnique::String(cmd));
-        }
-        fn add_deploy_cmd(&mut self, cmd: String) {
-            self.deploy_cmds.push(StringOrUnique::String(cmd));
-        }
-        fn add_post_deploy_cmd(&mut self, cmd: String) {
-            self.post_deploy_cmds.push(StringOrUnique::String(cmd));
-        }
-        fn add_pre_build_cmd_unique(&mut self, cmd: String) {
-            self.pre_build_cmds.push(StringOrUnique::Unique(cmd));
-        }
-        fn add_build_cmd_unique(&mut self, cmd: String) {
-            self.build_cmds.push(StringOrUnique::Unique(cmd));
-        }
-        fn add_package_cmd_unique(&mut self, cmd: String) {
-            self.package_cmds.push(StringOrUnique::Unique(cmd));
-        }
-        fn add_deploy_cmd_unique(&mut self, cmd: String) {
-            self.deploy_cmds.push(StringOrUnique::Unique(cmd));
-        }
-        fn add_post_deploy_cmd_unique(&mut self, cmd: String) {
-            self.post_deploy_cmds.push(StringOrUnique::Unique(cmd));
-        }
         fn output_file(&mut self, name: String, data: Vec<u8>) {
             self.output_files.push(FileOut { name, data });
+        }
+        /// given a file name (no paths. the file will appear in ./wasmgen/{filename})
+        /// and a label, and a line (string) append to the file. create the file if it doesnt exist.
+        /// the label is used to sort lines between your wasm module and other invocations.
+        /// the label is also embedded to the file. so if you are outputing to a .sh file, for example,
+        /// your label should start with '#'. The labels are sorted alphabetically.
+        /// Example:
+        /// ```
+        /// # wasm module 1 does:
+        /// append_to_file("hello.txt", "b", "line1");
+        /// # wasm module 2 does:
+        /// append_to_file("hello.txt", "b", "line2");
+        /// # wasm module 3 does:
+        /// append_to_file("hello.txt", "a", "line3");
+        /// # wasm moudle 4 does:
+        /// append_to_file("hello.txt", "a", "line4");
+        /// 
+        /// # the output:
+        /// a
+        /// line3
+        /// line4
+        /// b
+        /// line1
+        /// line2
+        /// ```
+        fn append_to_file(&mut self, name: &str, label: &str, line: String) {
+            self.shared_output_data.push(SharedOutputEntry { label: label.into(), line, filename: name.into(), unique: false });
+        }
+
+        /// same as append_to_file, but the line will be unique within the label
+        fn append_to_file_unique(&mut self, name: &str, label: &str, line: String) {
+            self.shared_output_data.push(SharedOutputEntry { label: label.into(), line, filename: name.into(), unique: true });
         }
     }
     #[output_and_stringify_basic(user_data_extra_impl)]
