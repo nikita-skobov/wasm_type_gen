@@ -690,10 +690,14 @@ fn wasm_type_gen_struct_named_fields(
         }
     });
 
+    let mut unique_ty = vec![];
     let mut add_includes = vec![];
     for field in fields.iter() {
         let ty = &field.ty;
-        set_include_wasm(&mut add_includes, ty);
+        if !unique_ty.contains(ty) {
+            unique_ty.push(ty.clone());
+            set_include_wasm(&mut add_includes, ty);
+        }
     }
 
     (add_includes, quote! {
