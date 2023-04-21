@@ -45,6 +45,7 @@ pub fn compile_string_to_wasm(wasm_out_name: &str, file_data: &str, add_to_code:
 
     let wasm_output_base = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into());
     let wasm_out_dir = format!("{}/wasmout", wasm_output_base);
+    let wasm_out_dir_incremental = format!("{}/incremental", wasm_out_dir);
     // skip compilation if file already exists
     let module_path = format!("{}/{}", wasm_out_dir, wasm_out_name);
     let last_module_destination = format!("{}/{}", wasm_out_dir, wasm_last_name);
@@ -72,7 +73,9 @@ pub fn compile_string_to_wasm(wasm_out_name: &str, file_data: &str, add_to_code:
         }
     }
 
+    let incremental_arg = format!("incremental={wasm_out_dir_incremental}");
     let _ = std::fs::create_dir(wasm_out_dir);
+    let _ = std::fs::create_dir(wasm_out_dir_incremental);
     // for debugging:
     // let mut f = std::fs::File::options().create(true).append(true).open("./compilationlog.txt").unwrap();
     // let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap_or("UNKNOWN".into());
@@ -86,12 +89,13 @@ pub fn compile_string_to_wasm(wasm_out_name: &str, file_data: &str, add_to_code:
         .arg("--target").arg("wasm32-unknown-unknown")
         .arg("--crate-type=cdylib")
         .arg("-C").arg("debuginfo=0")
-        .arg("-C").arg("opt-level=3")
+        .arg("-C").arg("opt-level=0")
         .arg("-C").arg("debug-assertions=off")
-        .arg("-C").arg("codegen-units=1")
-        .arg("-C").arg("linker-plugin-lto=yes")
+        .arg("-C").arg("codegen-units=16")
+        .arg("-C").arg("embed-bitcode=no")
         .arg("-C").arg("strip=symbols")
-        .arg("-C").arg("lto=yes")
+        .arg("-C").arg("lto=no")
+        .arg("-C").arg(&incremental_arg)
         .arg("-o").arg(module_path.as_str())
         .arg("-")
         .stdin(Stdio::piped())
