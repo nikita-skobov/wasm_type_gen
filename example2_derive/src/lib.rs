@@ -2,7 +2,6 @@ use std::path::Path;
 use std::{path::PathBuf, io::Write};
 use std::str::FromStr;
 use toml::Table;
-use path_clean::clean;
 
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
@@ -66,73 +65,6 @@ fn should_do_file_operations() -> bool {
         }
     }
     should_do
-}
-
-/// recursively delete the module folder while respecting the persist paths.
-/// level must be 0 when calling this at first because the structure of the wasm module folder
-/// is: wasm_module_name/users_type
-/// so there can be many users_type folders within a wasm module, and we want to preserve the users_type folders
-/// ie: we only actually delete if we are not at level=0
-fn recurse_and_clear_module_folder<S: AsRef<Path>>(
-    p: S,
-    level: usize,
-    persist_paths: &Vec<String>,
-) -> std::io::Result<()> {
-    let readdir = std::fs::read_dir(p.as_ref())?;
-    for next in readdir {
-        let entry = match next {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        let ty = entry.file_type()?;
-        // if we're at the root of the module folder, just recurse. dont delete the
-        // user type folders:
-        if level == 0 {
-            if ty.is_dir() {
-                recurse_and_clear_module_folder(&path, level + 1, persist_paths)?;
-                // we finished reading the user type folder: is it empty? if so, no point in
-                // keeping an empty folder, so just delete it.
-                if let Ok(mut readdir2) = path.read_dir() {
-                    if readdir2.next().is_none() {
-                        // its empty, so delete it
-                        let _ = std::fs::remove_dir(path);
-                    }
-                }
-            }
-            // regardless of if its a file, or a dir, we are at level 0
-            // so dont delete these.
-            continue;
-        }
-        // ignore errors if we fail to delete something. this is an optimistic operation
-        // and it doesnt make sense to fail. worst case is these files will be overridden, and
-        // some files persist unnecessarily.
-        let should_delete = !persist_paths.contains(&name);
-        match (should_delete, ty.is_dir()) {
-            (true, true) => {                
-                let _ = std::fs::remove_dir_all(path);
-            }
-            (true, false) => {
-                let _ = std::fs::remove_file(path);
-            }
-            // no matter if its a dir or a file, if we want to persist this path, then
-            // theres no point in recursivng
-            _ => {}
-        }
-    }
-
-    Ok(())
-}
-
-/// recursively iterate the wasm module's folder and delete everything that doesnt match
-/// one of the persist paths
-fn delete_wasm_module_folder(wasm_module_name: &str, persist_paths: Vec<String>) -> std::io::Result<()> {
-    let base_dir = get_wasmgen_base_dir();
-    let path = format!("{base_dir}/{wasm_module_name}");
-    // println!("GOING TO DELETE {path}");
-    recurse_and_clear_module_folder(PathBuf::from(path), 0, &persist_paths)?;
-    Ok(())
 }
 
 #[proc_macro]
@@ -244,46 +176,6 @@ pub fn wasm_modules(items: proc_macro::TokenStream) -> proc_macro::TokenStream {
         });
         if let Some(requireds) = reqs {
             required_crates.push((original_path.clone(), requireds));
-        }
-        // wasm modules can create files within the folder we generate for them. they can request to persist
-        // certain file names/directories that are exact matches
-        let persist_paths = parsed_wasm_code.items.iter().find_map(|item| {
-            if let syn::Item::Const(c) = item {
-                if c.ident.to_string() == "PERSIST_PATHS" {
-                    let arr = match &*c.expr {
-                        syn::Expr::Array(arr) => arr,
-                        syn::Expr::Reference(r) => {
-                            if let syn::Expr::Array(arr) = &*r.expr {
-                                arr
-                            } else {
-                                return None;
-                            }
-                        }
-                        _ => {
-                            return None;
-                        }
-                    };
-                    let mut out: Vec<String> = vec![];
-                    for item in arr.elems.iter() {
-                        if let syn::Expr::Lit(l) = item {
-                            if let syn::Lit::Str(s) = &l.lit {
-                                let mut s = s.token().to_string();
-                                while s.starts_with('"') && s.ends_with('"') {
-                                    s.remove(0);
-                                    s.pop();
-                                }
-                                out.push(s);
-                            }
-                        }
-                    }
-                    return Some(out);
-                }
-            }
-            None
-        }).unwrap_or_default();
-        let should_delete_wasm_module_folder = should_do_file_operations();
-        if should_delete_wasm_module_folder {
-            let _ = delete_wasm_module_folder(&path_name, persist_paths);
         }
 
         // search the file again and export its type inline:
@@ -461,57 +353,6 @@ fn set_visibility(vis: &mut Visibility, is_pub: bool) {
     }
 }
 
-fn merge_command_vec(
-    original: Vec<Result<String, String>>,
-    shared: &mut Vec<String>
-) {
-    let shared_len_before = shared.len();
-    for cmd in original {
-        match cmd {
-            Ok(s) => {
-                shared.push(s);
-            }
-            Err(s) => {
-                if !shared.contains(&s) {
-                    shared.push(s);
-                }
-            }
-        }
-    }
-    // this is kinda hacky:
-    // the point of this is if we filter out all of the strings that
-    // the user marked as unique, and we find that all that is left are 3
-    // command lines, then those correspond to:
-    // #comment
-    // cd dir/
-    // cd back/
-    // {newline}
-    // and that isnt useful to output, so we check that condition here simply
-    // by the length of the output and truncate if its 4 more than it was
-    if shared.len() == shared_len_before + 4 {
-        shared.truncate(shared_len_before);
-    }
-}
-
-fn output_generated_file(
-    wasm_module_name: &str,
-    user_type_name: &str,
-    file_name: String,
-    file_data: Vec<u8>
-) -> Result<(), String> {
-    let expected_base = get_wasmgen_base_dir();
-    let expected_base = PathBuf::from(format!("{expected_base}/{wasm_module_name}/{user_type_name}/"));
-    let mut output_path = expected_base.clone();
-    output_path.push(&file_name);
-    let output_path = clean(output_path);
-    // ensure that generated files from wasm modules are only allowed to output files in the directory we create for them
-    if !output_path.starts_with(expected_base) {
-        return Err(format!("Wasm module '{wasm_module_name}' attempted to output a file '{file_name}' outside of its directory"));
-    }
-    std::fs::write(&output_path, file_data).map_err(|e| format!("Failed to output file {:?}\nError:\n{:?}", output_path, e))?;
-    Ok(())
-}
-
 fn merge_shared_files(
     wasm_module_name: &str,
     data: Vec<MapEntry<MapEntry<(bool, String, Option<String>)>>>
@@ -668,7 +509,6 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         /// crate_name is read only. modifying this has no effect.
         pub crate_name: String,
         pub user_data: UserData,
-        pub output_files: Vec<FileOut>,
         pub shared_output_data: Vec<SharedOutputEntry>,
     }
 
@@ -693,9 +533,6 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
 
     impl LibraryObj {
         pub fn handle_file_ops(&mut self, wasm_module_name: &str, user_type_name: &str) -> Result<(), String> {
-            for file in self.output_files.drain(..) {
-                output_generated_file(wasm_module_name, user_type_name, file.name, file.data)?;
-            }
             output_shared_files(wasm_module_name, to_map_entry(std::mem::take(&mut self.shared_output_data)))
         }
     }
@@ -790,9 +627,6 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     impl LibraryObj {
         fn compile_error(&mut self, err_msg: &str) {
             self.compiler_error_message = err_msg.into();
-        }
-        fn output_file(&mut self, name: String, data: Vec<u8>) {
-            self.output_files.push(FileOut { name, data });
         }
         /// given a file name (no paths. the file will appear in ./wasmgen/{filename})
         /// and a label, and a line (string) append to the file. create the file if it doesnt exist.
@@ -1022,13 +856,6 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     // this is necessary to allow the compile function to find previously compiled versions in case it fails to compile.
     // it groups it by this "item_hash".
     let item_name = input_type.get_name();
-
-    if should_output_command_files {
-        // create the wasm module folder so it can output files there optionally:
-        let wasmgen_dir = get_wasmgen_base_dir();
-        let path = format!("{wasmgen_dir}/{module_name}/{item_name}");
-        let _ = std::fs::create_dir_all(path);
-    }
 
     let mut pass_this = LibraryObj::default();
     pass_this.user_data = (&input_type).into();
