@@ -514,7 +514,7 @@ fn output_generated_file(
 
 fn merge_shared_files(
     wasm_module_name: &str,
-    data: Vec<MapEntry<MapEntry<(bool, String)>>>    
+    data: Vec<MapEntry<MapEntry<(bool, String, Option<String>)>>>
 ) -> Result<(), String> {
     unsafe {
         // merge the current data with the previous data
@@ -542,14 +542,30 @@ fn merge_shared_files(
                     &mut SHARED_FILE_DATA[index].lines[0]
                 };
 
-                for (unique, line) in file_data.lines {
+                for (unique, line, after) in file_data.lines {
                     if unique {
                         if !label_entry.lines.contains(&line) {
                             label_entry.lines.push(line);
                         }
-                    } else {
-                        label_entry.lines.push(line);
+                        continue;
                     }
+                    // if after is provided, then treat 'line' as a search string, and
+                    // try to insert the after portion immediately after the search string.
+                    // if not found, output a newline concatenation of line+after
+                    if let Some(after) = after {
+                        let found_str = label_entry.lines.iter_mut()
+                            .find_map(|l| l.find(&line).map(|index| (l, index + line.len())));
+                        if let Some((found_str, index)) = found_str {
+                            // found, now insert the after portion at the index
+                            found_str.insert_str(index, &after);
+                        } else {
+                            // not found, just concatenate and output
+                            label_entry.lines.push(format!("{line}{after}"));
+                        }
+                        continue;
+                    }
+                    // otherwise, its just a normal line entry
+                    label_entry.lines.push(line);
                 }
             }
         }
@@ -560,7 +576,7 @@ fn merge_shared_files(
 
 fn output_shared_files(
     wasm_module_name: &str,
-    data: Vec<MapEntry<MapEntry<(bool, String)>>>
+    data: Vec<MapEntry<MapEntry<(bool, String, Option<String>)>>>
 ) -> Result<(), String> {
     // set the wasm_module's data into the global shared data object.
     merge_shared_files(wasm_module_name, data)?;
@@ -642,6 +658,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         pub label: String,
         pub line: String,
         pub unique: bool,
+        pub after: Option<String>,
     }
 
     #[derive(WasmTypeGen, Debug, Default)]
@@ -655,19 +672,19 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         pub shared_output_data: Vec<SharedOutputEntry>,
     }
 
-    fn to_map_entry(data: Vec<SharedOutputEntry>) -> Vec<MapEntry<MapEntry<(bool, String)>>> {
-        let mut map_entries: Vec<MapEntry<MapEntry<(bool, String)>>> = vec![];
+    fn to_map_entry(data: Vec<SharedOutputEntry>) -> Vec<MapEntry<MapEntry<(bool, String, Option<String>)>>> {
+        let mut map_entries: Vec<MapEntry<MapEntry<(bool, String, Option<String>)>>> = vec![];
         for d in data {
             if let Some(m) = map_entries.iter_mut().find(|x| x.key == d.filename) {
                 if let Some(m) = m.lines.iter_mut().find(|x| x.key == d.label) {
-                    m.lines.push((d.unique, d.line));
+                    m.lines.push((d.unique, d.line, d.after));
                 } else {
-                    m.lines.push(MapEntry { key: d.label, lines: vec![(d.unique, d.line)] });
+                    m.lines.push(MapEntry { key: d.label, lines: vec![(d.unique, d.line, d.after)] });
                 }
             } else {
                 map_entries.push(MapEntry { key: d.filename, lines: vec![MapEntry {
                     key: d.label,
-                    lines: vec![(d.unique, d.line)],
+                    lines: vec![(d.unique, d.line, d.after)],
                 }] })
             }
         }
@@ -802,12 +819,26 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         /// line2
         /// ```
         fn append_to_file(&mut self, name: &str, label: &str, line: String) {
-            self.shared_output_data.push(SharedOutputEntry { label: label.into(), line, filename: name.into(), unique: false });
+            self.shared_output_data.push(SharedOutputEntry { label: label.into(), line, filename: name.into(), unique: false, after: None });
         }
 
         /// same as append_to_file, but the line will be unique within the label
         fn append_to_file_unique(&mut self, name: &str, label: &str, line: String) {
-            self.shared_output_data.push(SharedOutputEntry { label: label.into(), line, filename: name.into(), unique: true });
+            self.shared_output_data.push(SharedOutputEntry { label: label.into(), line, filename: name.into(), unique: true, after: None });
+        }
+
+        /// like append_to_file, but given a search string, find that search string in that label
+        /// and then append the `after` portion immediately after the search string. Example:
+        /// ```
+        /// // "hello " doesnt exist yet, so the whole "hello , and also my friend Tim!" gets added
+        /// append_to_line("hello.txt", "a", "hello ", ", and also my friend Tim!");
+        /// append_to_line("hello.txt", "a", "hello ", "world"); 
+        /// 
+        /// # the output:
+        /// hello world, and also my friend Tim!
+        /// ```
+        fn append_to_line(&mut self, name: &str, label: &str, search_str: String, after: String) {
+            self.shared_output_data.push(SharedOutputEntry { label: label.into(), line: search_str, filename: name.into(), unique: false, after: Some(after) });
         }
     }
     #[output_and_stringify_basic(user_data_extra_impl)]
