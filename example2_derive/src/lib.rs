@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::{path::PathBuf, io::Write};
 use std::str::FromStr;
 use toml::Table;
@@ -10,19 +9,12 @@ use syn::{
     parse_file,
     ItemFn,
     ItemStruct,
-    ItemStatic, ItemConst, ItemMod, Visibility, token::Pub, ExprMatch,
-    // Data,
-    // Fields,
-    // FieldsNamed,
-    // DataEnum,
-    // FieldsUnnamed,
-    // ExprClosure,
-    // PathSegment,
-    // PatType,
-    // PatIdent,
-    // Pat,
-    // TypeParam,
-    // TypeNever
+    ItemStatic,
+    ItemConst,
+    ItemMod,
+    Visibility,
+    token::Pub,
+    ExprMatch,
 };
 use quote::{quote, format_ident, ToTokens};
 use wasm_type_gen::*;
@@ -88,7 +80,7 @@ fn struct_item_to_doc_comment(item: &mut ItemStruct) -> String {
                 }
             }
         }
-        s.push_str(&format!("  {} {}: {}\n",
+        s.push_str(&format!("  {} {}: {},\n",
             field.vis.to_token_stream().to_string(),
             field.ident.to_token_stream().to_string(),
             field.ty.to_token_stream().to_string(),
@@ -569,7 +561,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
     }
 
     impl LibraryObj {
-        pub fn handle_file_ops(&mut self, wasm_module_name: &str, user_type_name: &str) -> Result<(), String> {
+        pub fn handle_file_ops(&mut self, wasm_module_name: &str, _user_type_name: &str) -> Result<(), String> {
             output_shared_files(wasm_module_name, to_map_entry(std::mem::take(&mut self.shared_output_data)))
         }
     }
@@ -611,7 +603,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
                     }
                     let return_ty = match &x.sig.output {
                         syn::ReturnType::Default => "".into(),
-                        syn::ReturnType::Type(a, b) => b.to_token_stream().to_string(),
+                        syn::ReturnType::Type(_, b) => b.to_token_stream().to_string(),
                     };
                     Self::Function { name, is_pub: is_public(&x.vis), inputs, is_async: x.sig.asyncness.is_some(), return_ty }
                 }
@@ -624,7 +616,8 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
                 InputType::Module(x) => {
                     Self::Module { name, is_pub: is_public(&x.vis) }
                 }
-                InputType::Match(x) => {
+                InputType::Match(_x) => {
+                    // TODO: implement iterating match arms
                     Self::Match { name, is_pub: false }
                 }
             }
@@ -662,6 +655,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
 
     #[output_and_stringify_basic(library_obj_extra_impl)]
     impl LibraryObj {
+        #[allow(dead_code)]
         fn compile_error(&mut self, err_msg: &str) {
             self.compiler_error_message = err_msg.into();
         }
@@ -671,7 +665,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         /// the label is also embedded to the file. so if you are outputing to a .sh file, for example,
         /// your label should start with '#'. The labels are sorted alphabetically.
         /// Example:
-        /// ```
+        /// ```rust,ignore
         /// # wasm module 1 does:
         /// append_to_file("hello.txt", "b", "line1");
         /// # wasm module 2 does:
@@ -689,18 +683,20 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         /// line1
         /// line2
         /// ```
+        #[allow(dead_code)]
         fn append_to_file(&mut self, name: &str, label: &str, line: String) {
             self.shared_output_data.push(SharedOutputEntry { label: label.into(), line, filename: name.into(), unique: false, after: None });
         }
 
         /// same as append_to_file, but the line will be unique within the label
+        #[allow(dead_code)]
         fn append_to_file_unique(&mut self, name: &str, label: &str, line: String) {
             self.shared_output_data.push(SharedOutputEntry { label: label.into(), line, filename: name.into(), unique: true, after: None });
         }
 
         /// like append_to_file, but given a search string, find that search string in that label
         /// and then append the `after` portion immediately after the search string. Example:
-        /// ```
+        /// ```rust,ignore
         /// // "hello " doesnt exist yet, so the whole "hello , and also my friend Tim!" gets added
         /// append_to_line("hello.txt", "a", "hello ", ", and also my friend Tim!");
         /// append_to_line("hello.txt", "a", "hello ", "world"); 
@@ -708,6 +704,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         /// # the output:
         /// hello world, and also my friend Tim!
         /// ```
+        #[allow(dead_code)]
         fn append_to_line(&mut self, name: &str, label: &str, search_str: String, after: String) {
             self.shared_output_data.push(SharedOutputEntry { label: label.into(), line: search_str, filename: name.into(), unique: false, after: Some(after) });
         }
@@ -719,6 +716,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         /// 
         /// or `pub fn helloworld(a: u32) { ... }` returns "helloworld"
         /// Can rename the user's data type by modifying this string directly
+        #[allow(dead_code)]
         fn get_name(&mut self) -> &mut String {
             match self {
                 UserData::Struct { name, .. } => name,
@@ -731,6 +729,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         }
         /// Returns a bool of whether or not the user marked their data as pub or not.
         /// Can set this value to true or false depending on your module's purpose.
+        #[allow(dead_code)]
         fn get_public_vis(&mut self) -> &mut bool {
             match self {
                 UserData::Struct { is_pub, .. } => is_pub,
