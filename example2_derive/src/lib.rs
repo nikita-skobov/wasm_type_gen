@@ -67,6 +67,39 @@ fn should_do_file_operations() -> bool {
     should_do
 }
 
+fn struct_item_to_doc_comment(item: &mut ItemStruct) -> String {
+    let mut s = "# Full Definition:\n\n```\n".to_string();
+    s.push_str(&item.vis.to_token_stream().to_string());
+    s.push(' ');
+    s.push_str(&item.struct_token.to_token_stream().to_string());
+    s.push(' ');
+    s.push_str(&item.ident.to_string());
+    s.push_str(" {\n");
+    for field in item.fields.iter() {
+        for attr in field.attrs.iter() {
+            if let syn::Meta::NameValue(nv) = &attr.meta {
+                if let syn::Expr::Lit(l) = &nv.value {
+                    let mut out_comment = l.lit.to_token_stream().to_string();
+                    while out_comment.starts_with('"') && out_comment.ends_with('"') {
+                        out_comment.remove(0);
+                        out_comment.pop();
+                    }
+                    s.push_str(&format!("  ///{}\n", out_comment));
+                }
+            }
+        }
+        s.push_str(&format!("  {} {}: {}\n",
+            field.vis.to_token_stream().to_string(),
+            field.ident.to_token_stream().to_string(),
+            field.ty.to_token_stream().to_string(),
+        ));
+    }
+    s.push_str("}\n");
+    s.push_str("```\n");
+
+    s
+}
+
 #[proc_macro]
 pub fn wasm_modules(items: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut module_paths = vec![];
@@ -107,7 +140,7 @@ pub fn wasm_modules(items: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 return TokenStream::from(out);
             }
         };
-        let parsed_wasm_code = match parse_file(&wasm_code) {
+        let mut parsed_wasm_code = match parse_file(&wasm_code) {
             Ok(p) => p,
             Err(e) => {
                 panic!("Failed to parse {} as valid rust code. Error:\n{:?}", path, e);
@@ -179,19 +212,23 @@ pub fn wasm_modules(items: proc_macro::TokenStream) -> proc_macro::TokenStream {
         }
 
         // search the file again and export its type inline:
-        let export_item = parsed_wasm_code.items.iter().find(|thing| {
+        let export_item = parsed_wasm_code.items.iter_mut().find_map(|thing| {
             match thing {
                 syn::Item::Struct(s) => if s.ident.to_string() == export_type {
-                    true
+                    let struct_def = struct_item_to_doc_comment(s);
+                    let attrs = std::mem::take(&mut s.attrs);
+                    Some((s, struct_def, attrs))
                 } else {
-                    false
+                    None
                 },
-                _ => false,
+                _ => None,
             }
         });
-        if let Some(export) = export_item {
+        if let Some((export, export_str, attrs)) = export_item {
             exports.push(quote! {
                 mod #module_name {
+                    #(#attrs)*
+                    #[doc = #export_str]
                     #export
                 }
             });
