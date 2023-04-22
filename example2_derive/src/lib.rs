@@ -923,7 +923,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         add_to_source: Option<String>,
         data_to_pass: &LibraryObj,
     ) -> Option<LibraryObj> {
-        let out_file = compile_string_to_wasm(out_name_hash, wasm_source, add_to_source).expect("compilation error");
+        let out_file = compile_string_to_wasm(out_name_hash, wasm_source, add_to_source, None).expect("compilation error");
         let wasm_file = std::fs::read(out_file).expect("failed to read wasm binary");
         let out = run_wasm(&wasm_file, data_to_pass.to_binary_slice()).expect("runtime error running wasm");
         LibraryObj::from_binary_slice(out)

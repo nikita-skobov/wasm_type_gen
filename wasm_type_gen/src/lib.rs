@@ -12,10 +12,19 @@ pub fn compile_file_to_wasm(s: &str, add_to_code: Option<String>) -> Result<Stri
     let file_data = std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {:?} file\n{:?}", path, e))?;
 
     let file_stem = path.file_stem().ok_or("Failed to get .rs file name")?.to_string_lossy().to_string();
-    compile_string_to_wasm(&file_stem, &file_data, add_to_code)
+    compile_string_to_wasm(&file_stem, &file_data, add_to_code, None)
 }
 
-pub fn compile_string_to_wasm(wasm_out_name: &str, file_data: &str, add_to_code: Option<String>) -> Result<String, String> {
+/// If output_dir is provided we output wasm binaries to:
+/// CARGO_MANIFEST_DIR/output_dir
+/// If output_dir starts with a slash, then we just output directly to:
+/// output_dir
+pub fn compile_string_to_wasm(
+    wasm_out_name: &str,
+    file_data: &str,
+    add_to_code: Option<String>,
+    output_dir: Option<String>,
+) -> Result<String, String> {
     // to get IDE hints in our editor, our .rs file that will be turned into a .wasm file
     // must import the types that it references.
     // however, we wish to compile only a single file, and thus have no way of handling imports / linking.
@@ -43,8 +52,19 @@ pub fn compile_string_to_wasm(wasm_out_name: &str, file_data: &str, add_to_code:
         format!("{wasm_out_name}.{hash}.wasm")
     };
 
-    let wasm_output_base = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into());
-    let wasm_out_dir = format!("{}/wasmout", wasm_output_base);
+    let wasm_out_dir = match output_dir {
+        Some(s) => if s.starts_with('/') {
+            s
+        } else {
+            let wasm_output_base = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into());
+            format!("{wasm_output_base}/{s}")
+        }
+        None => {
+            let wasm_output_base = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into());
+            format!("{}/wasmout", wasm_output_base)
+        }
+    };
+
     let wasm_out_dir_incremental = format!("{}/incremental", wasm_out_dir);
     // skip compilation if file already exists
     let module_path = format!("{}/{}", wasm_out_dir, wasm_out_name);
