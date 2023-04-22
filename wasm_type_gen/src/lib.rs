@@ -778,4 +778,63 @@ mod tests {
         // ensure that generated code for wasm includes type def of Something
         assert!(Abc::include_in_rs_wasm().contains("pub struct Something"));
     }
+
+    #[test]
+    fn child_struct_def_only_once() {
+        #[derive(WasmTypeGen, PartialEq, Debug, Copy, Clone)]
+        pub struct Something {
+            pub a: u32,
+        }
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub a1: Something,
+            pub a2: Something,
+            pub a3: Something,
+        }
+        let item = Abc {
+            a1: Something { a: 0 },
+            a2: Something { a: 1 },
+            a3: Something { a: 2 },
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+        // ensure that generated code for wasm includes type def of Something
+        // and ensure it only appears once!
+        assert_eq!(Abc::include_in_rs_wasm().match_indices("pub struct Something").collect::<Vec<_>>().len(), 1);
+    }
+
+    #[test]
+    fn works_for_results() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Something {
+            pub a: u32,
+        }
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Other {
+            pub a: u32,
+        }
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            b: Result<Something, Other>,
+            c: Result<Other, Something>,
+        }
+        let item = Abc {
+            b: Ok(Something { a: 100 }),
+            c: Ok(Other { a: 101 }),
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+        // ensure that generated code for wasm includes type def of Something, and Other
+        // and ensure they only appear once!
+        assert_eq!(Abc::include_in_rs_wasm().match_indices("pub struct Other").collect::<Vec<_>>().len(), 1);
+        assert_eq!(Abc::include_in_rs_wasm().match_indices("pub struct Something").collect::<Vec<_>>().len(), 1);
+    }
 }

@@ -180,6 +180,40 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
             }
         }
 
+        impl<T: ToBinarySlice, U: ToBinarySlice> ToBinarySlice for Result<T, U> {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                match self {
+                    Ok(d) => {
+                        data.extend([255, 255, 255, 255]);
+                        d.add_to_slice(data);
+                    },
+                    Err(d) => {
+                        data.extend([255, 255, 255, 254]);
+                        d.add_to_slice(data);
+                    },
+                }
+            }
+        }
+
+        impl<T: FromBinarySlice, U: FromBinarySlice> FromBinarySlice for Result<T, U> {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self>where Self:Sized {
+                let first_4 = data.get(*index..*index + 4)?;
+                let first_4_u32_bytes = [first_4[0], first_4[1], first_4[2], first_4[3]];
+                *index += 4;
+                if first_4_u32_bytes == [255, 255, 255, 255] {
+                    let t_thing = T::get_from_slice(index, data)?;
+                    Some(Ok(t_thing))
+                } else if first_4_u32_bytes == [255, 255, 255, 254] {
+                    let u_thing = U::get_from_slice(index, data)?;
+                    Some(Err(u_thing))
+                } else {
+                    None
+                }
+            }
+        }
+
         impl<T: ToBinarySlice> ToBinarySlice for Vec<T> {
             #[inline(always)]
             fn add_to_slice(&self, data: &mut Vec<u8>) {
@@ -615,18 +649,20 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
     TokenStream::from(expanded)
 }
 
-fn set_include_wasm(add_includes: &mut Vec<proc_macro2::TokenStream>, ty: &Type) {
+fn set_include_wasm(add_includes: &mut Vec<proc_macro2::TokenStream>, unique_types: &mut Vec<Type>, ty: &Type) {
     match ty {
         Type::Path(p) => {
             let type_path = p.path.segments.last()
                 .map(|f| f.ident.to_string()).unwrap_or("u32".to_string());
             match type_path.as_str() {
                 "String" | "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "i128" | "u128" | "isize" | "usize" | "f32" | "f64" | "bool" | "char" => {},
-                "Option" | "Vec" => {
+                "Option" | "Vec" | "Result" => {
                     if let Some(last_seg) = &p.path.segments.last() {
                         if let syn::PathArguments::AngleBracketed(ab) = &last_seg.arguments {
-                            if let Some(syn::GenericArgument::Type(p)) = ab.args.first() {
-                                set_include_wasm(add_includes, p);
+                            for generic in ab.args.iter() {
+                                if let syn::GenericArgument::Type(p) = generic {
+                                    set_include_wasm(add_includes, unique_types, p);
+                                }
                             }
                         }
                     }
@@ -634,14 +670,17 @@ fn set_include_wasm(add_includes: &mut Vec<proc_macro2::TokenStream>, ty: &Type)
                 // this is a non-standard type, so we
                 // want to add this to the string that should be exported to the wasm file.
                 _ => {
-                    add_includes.push(quote! {
-                        #ty::include_in_rs_wasm(),
-                    });
+                    if !unique_types.contains(ty) {
+                        unique_types.push(ty.clone());
+                        add_includes.push(quote! {
+                            #ty::include_in_rs_wasm(),
+                        });
+                    }
                 }
             }
         }
         Type::Array(a) => {
-            set_include_wasm(add_includes, &a.elem);
+            set_include_wasm(add_includes, unique_types, &a.elem);
         }
         // Type::BareFn(_) => todo!(),
         // Type::Group(_) => todo!(),
@@ -694,10 +733,7 @@ fn wasm_type_gen_struct_named_fields(
     let mut add_includes = vec![];
     for field in fields.iter() {
         let ty = &field.ty;
-        if !unique_ty.contains(ty) {
-            unique_ty.push(ty.clone());
-            set_include_wasm(&mut add_includes, ty);
-        }
+        set_include_wasm(&mut add_includes, &mut unique_ty, ty);
     }
 
     (add_includes, quote! {
@@ -860,18 +896,19 @@ fn wasm_type_gen_enum_named_fields(
         }
     });
 
+    let mut unique_types = vec![];
     let mut add_includes = vec![];
     for variant in variants {
         match &variant.fields {
             Fields::Unit => {}
             Fields::Named(fields) => {
                 for field in &fields.named {
-                    set_include_wasm(&mut add_includes, &field.ty);
+                    set_include_wasm(&mut add_includes, &mut unique_types, &field.ty);
                 }
             }
             Fields::Unnamed(fields) => {
                 for field in &fields.unnamed {
-                    set_include_wasm(&mut add_includes, &field.ty);
+                    set_include_wasm(&mut add_includes, &mut unique_types, &field.ty);
                 }
             }
         }
@@ -942,10 +979,11 @@ fn wasm_type_gen_struct_unnamed_fields(
         }
     });
 
+    let mut unique_types = vec![];
     let mut add_includes = vec![];
     for field in fields.iter() {
         let ty = &field.ty;
-        set_include_wasm(&mut add_includes, ty);
+        set_include_wasm(&mut add_includes, &mut unique_types, ty);
     }
 
     (add_includes, quote! {
