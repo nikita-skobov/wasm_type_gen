@@ -908,7 +908,7 @@ pub fn wasm_meta(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -
         // TODO: currently we just add a compile_error to the end of the stream..
         // in the future maybe search for a string, and replace the right hand side to compile_error
         // so that we can put it on a specific line
-        let err = format!("compile_error!(\"{}\");", lib_obj.compiler_error_message);
+        let err = format!("compile_error!(r#\"{}\"#);", lib_obj.compiler_error_message);
         if let Ok(err) = proc_macro2::TokenStream::from_str(&err) {
             attr.extend([err]);
         }
