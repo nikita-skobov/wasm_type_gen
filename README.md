@@ -1,0 +1,5 @@
+- `wasm_type_gen_derive` contains proc-macro generations for serialization and deserialization of moving data in and out of wasm
+- `wasm_type_gen` a library that provides convenience functions for building your own custom wasm framework
+- `example1` minimal example showing basic wasm type generation + compilation/usage
+- `example2_derive` more involved example illustrating the purpose of wasm_type_gen
+- `example2` consumer of `example2_derive`. This is the end goal for users to write code like this.
