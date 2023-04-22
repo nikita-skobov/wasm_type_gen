@@ -214,6 +214,36 @@ pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::To
             }
         }
 
+        impl<T: ToBinarySlice, U: ToBinarySlice> ToBinarySlice for std::collections::HashMap<T, U> {
+            #[inline(always)]
+            fn add_to_slice(&self, data: &mut Vec<u8>) {
+                let len_u32 = self.len() as u32;
+                let len_be_bytes = len_u32.to_be_bytes();
+                data.extend(len_be_bytes);
+                for (key, value) in self.iter() {
+                    key.add_to_slice(data);
+                    value.add_to_slice(data);
+                }
+            }
+        }
+
+        impl<T: FromBinarySlice + std::hash::Hash + Eq, U: FromBinarySlice> FromBinarySlice for std::collections::HashMap<T, U> {
+            #[inline(always)]
+            fn get_from_slice(index: &mut usize, data: &[u8]) -> Option<Self>where Self:Sized {
+                let first_4 = data.get(*index..*index + 4)?;
+                let first_4_u32_bytes = [first_4[0], first_4[1], first_4[2], first_4[3]];
+                let len = u32::from_be_bytes(first_4_u32_bytes) as usize;
+                *index += 4;
+                let mut out = std::collections::HashMap::with_capacity(len);
+                for i in 0..len {
+                    let key = T::get_from_slice(index, data)?;
+                    let value = U::get_from_slice(index, data)?;
+                    out.insert(key, value);
+                }
+                Some(out)
+            }
+        }
+
         impl<T: ToBinarySlice> ToBinarySlice for Vec<T> {
             #[inline(always)]
             fn add_to_slice(&self, data: &mut Vec<u8>) {
@@ -656,7 +686,7 @@ fn set_include_wasm(add_includes: &mut Vec<proc_macro2::TokenStream>, unique_typ
                 .map(|f| f.ident.to_string()).unwrap_or("u32".to_string());
             match type_path.as_str() {
                 "String" | "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "i128" | "u128" | "isize" | "usize" | "f32" | "f64" | "bool" | "char" => {},
-                "Option" | "Vec" | "Result" => {
+                "Option" | "Vec" | "Result" | "HashMap" => {
                     if let Some(last_seg) = &p.path.segments.last() {
                         if let syn::PathArguments::AngleBracketed(ab) = &last_seg.arguments {
                             for generic in ab.args.iter() {

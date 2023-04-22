@@ -837,4 +837,33 @@ mod tests {
         assert_eq!(Abc::include_in_rs_wasm().match_indices("pub struct Other").collect::<Vec<_>>().len(), 1);
         assert_eq!(Abc::include_in_rs_wasm().match_indices("pub struct Something").collect::<Vec<_>>().len(), 1);
     }
+
+    #[test]
+    fn works_for_hashmap() {
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Something {
+            pub a: u32,
+        }
+        #[derive(WasmTypeGen, PartialEq, Debug)]
+        pub struct Abc {
+            pub a: std::collections::HashMap<String, Result<Something, Something>>,
+            pub b: Something,
+        }
+        let mut map = std::collections::HashMap::new();
+        map.insert("hello".to_string(), Ok(Something { a: 1 }));
+        map.insert("world".to_string(), Err(Something { a: 2 }));
+        let item = Abc {
+            a: map,
+            b: Something { a: 3 },
+        };
+        // does ser work?
+        let data = item.to_binary_slice();
+        assert!(data.len() > 0);
+        // now deser:
+        let item2 = Abc::from_binary_slice(data).expect("Expected deser to work");
+        assert_eq!(item2, item2);
+        // ensure that generated code for wasm includes type def of Something
+        // and ensure it only appears once!
+        assert_eq!(Abc::include_in_rs_wasm().match_indices("pub struct Something").collect::<Vec<_>>().len(), 1);
+    }
 }
