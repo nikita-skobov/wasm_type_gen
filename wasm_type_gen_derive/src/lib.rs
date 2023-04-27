@@ -87,6 +87,42 @@ pub fn output_and_stringify_basic(attr: proc_macro::TokenStream, item: proc_macr
     TokenStream::from(expanded)
 }
 
+/// Unlike `output_and_stringify` this doesnt do anything fancy with extra derives. it only
+/// outputs exactly what you provide. It only takes 1 attribute, which is an ident of
+/// the variable you want the stringified tokens to be
+/// ```
+/// pub struct Hello;
+/// use wasm_type_gen_derive::output_and_stringify_basic_const;
+/// #[output_and_stringify_basic_const(MYCONST)]
+/// impl Hello {
+///     pub fn hello() {}
+/// }
+/// // the entire Hello impl will be stringified into `MYCONST`
+/// 
+/// println!("{MYCONST}");
+/// ```
+#[proc_macro_attribute]
+pub fn output_and_stringify_basic_const(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let attr = proc_macro2::TokenStream::from(attr);
+    let mut attr_iter = attr.into_iter();
+    let id = attr_iter.next().expect("Must provide an attribute to be the name of the variable that the string is output to");
+    let var_to_put_string = if let proc_macro2::TokenTree::Ident(id) = id {
+        id
+    } else {
+        panic!("output_and_stringify received attribute that is not a single identifier");
+    };
+
+    let item = proc_macro2::TokenStream::from(item);
+    let item_str = item.to_string();
+
+    let expanded = quote! {
+        #item
+
+        const #var_to_put_string: &str = #item_str;
+    };
+    TokenStream::from(expanded)
+}
+
 #[proc_macro]
 pub fn generate_parsing_traits(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let trait_stuff = quote! {

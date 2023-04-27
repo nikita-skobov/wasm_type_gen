@@ -2,7 +2,7 @@ use std::{path::PathBuf, process::{Command, Stdio}, io::{Write, Read}};
 
 use wasm_type_gen_derive::{generate_parsing_traits};
 pub use wasm_type_gen_derive::WasmTypeGen;
-pub use wasm_type_gen_derive::{output_and_stringify, output_and_stringify_basic};
+pub use wasm_type_gen_derive::{output_and_stringify, output_and_stringify_basic, output_and_stringify_basic_const};
 use wasmtime::*;
 
 generate_parsing_traits!();
