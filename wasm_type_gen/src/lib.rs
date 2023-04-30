@@ -1,4 +1,4 @@
-use std::{path::PathBuf, process::{Command, Stdio}, io::{Write, Read}};
+use std::{path::PathBuf, process::{Command, Stdio}, io::{Write, Read}, collections::{HashSet}};
 
 use wasm_type_gen_derive::{generate_parsing_traits};
 pub use wasm_type_gen_derive::WasmTypeGen;
@@ -13,6 +13,232 @@ pub fn compile_file_to_wasm(s: &str, add_to_code: Option<String>) -> Result<Stri
 
     let file_stem = path.file_stem().ok_or("Failed to get .rs file name")?.to_string_lossy().to_string();
     compile_string_to_wasm(&file_stem, &file_data, add_to_code, None)
+}
+
+pub fn format_file_contents(data: &str) -> Result<String, String> {
+    let mut cmd = Command::new("rustfmt")
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn().map_err(|e| format!("Failed to invoke rustfmt {:?}", e))?;
+    if let Some(mut stdin) = cmd.stdin.take() {
+        stdin.write_all(data.as_bytes()).map_err(|e| format!("Failed to write stdin for rustc invocation\n{:?}", e))?;
+    }
+
+    let output = cmd.wait().map_err(|e| format!("Failed to run rustfmt\n{:?}", e))?;
+    if !output.success() {
+        let mut err = String::new();
+        if let Some(mut out) = cmd.stderr.take() {
+            out.read_to_string(&mut err).map_err(|e| format!("Failed to get stderr after failure to run rustfmt\n{:?}", e))?;
+        }
+        return Err(format!("Failed to run rustfmt\n{}", err));
+    }
+    let mut out = String::new();
+    if let Some(mut stdout) = cmd.stdout.take() {
+        stdout.read_to_string(&mut out).map_err(|e| format!("Failed to get stdout after running rusftmt\n{:?}", e))?;
+    }
+    Ok(out)
+}
+
+/// new and improved compilation function.
+/// Provide a Vec<(S1, S2)> where the tuple has 2 strings:
+/// S1 is the name of the module being compiled, and S2 is the contents to compile.
+/// This function will compile in order of the vector, and the final element of the vector will be
+/// compiled to .wasm, whereas everything prior will be compiled to .rlib.
+/// This function skips compiling of each unit if that unit is already compiled.
+/// After compilation, this function will remove all other files that are .wasm and
+/// contain the name of the final module. For example consider:
+/// input: [("apple", "contents..."), ("orange", "contents...")]
+/// we compile libapple.{hash}.rlib
+/// and then orange.{hash}.wasm. If we detect that orange.{hash}.wasm doesnt exist,
+/// then we will iterate over the output_dir and remove anything with orange.*.wasm besides the one we
+/// just compiled.
+/// If successful, returns full path to the final .wasm file.
+pub fn compile_strings_to_wasm(
+    data: &[(String, String)],
+    output_dir: &str,
+) -> Result<String, String> {
+    let mut delete_prefixes = HashSet::new();
+    let mut delete_exclusions = vec![];
+    let len = data.len();
+    if len == 0 {
+        return Err("Must provide at least 1 file to compile".to_string());
+    }
+    let last_index = len - 1;
+    let mut return_string = "".to_string();
+
+    // let mut externs = vec![];
+    let mut dependency_has_changed = false;
+
+    // if this is being compiled by rust analyzer, its for a keystroke, and
+    // not something we usually want to fully compile. When the user saves the file, this
+    // env var is (hopefully!) not present, and then we will run a normal compile.
+    // otherwise, if we detect this, AND we have a last.wasm file, then just return that
+    if std::env::var("RUST_ANALYZER_INTERNALS_DO_NOT_USE").is_ok() {
+        // try to see if we have the final .wasm file, if so, just return that without
+        // compiling. if not, then continue and compile.
+        if let Some((wasm_name, _)) = data.last() {
+            let output_path = format!("{}/{}.wasm", output_dir, wasm_name);
+            if std::fs::File::open(&output_path).is_ok() {
+                return Ok(output_path);
+            }
+        }
+    }
+
+    for (i, (name, contents)) in data.iter().enumerate() {
+        // let contents = format_file_contents(&contents)?;
+        let reader = std::io::BufReader::new(contents.as_bytes());
+        let hash = adler32::adler32(reader).unwrap_or(0);
+        let (out_prefix, crate_type, ext) = if i == last_index {
+            ("", "--crate-type=cdylib", "wasm")
+        } else {
+            ("lib", "--crate-type=rlib", "rlib")
+        };
+
+        let output_name = format!("{out_prefix}{name}.{ext}");
+        let hash_file = format!("{output_name}.{hash}.txt");
+        let output_path = format!("{}/{}", output_dir, output_name);
+        let hash_file_path = format!("{}/{}", output_dir, hash_file);
+        // let incremental_dir = format!("incremental={}/incremental", output_dir);
+        // check if this file already exists. if so: skip its compilation.
+        // if it doesnt exist: we do 2 things:
+        // 1. compile it
+        // 2. after compilation, look for all files of {out_prefix}{name}.*{hash}.txt
+        //    and delete them (except the current one)
+        if !dependency_has_changed {
+            match std::fs::File::open(&hash_file_path) {
+                // it exists, skip compilation. if its a wasm, we should return the path.
+                Ok(_) => {
+                    if ext == "wasm" { return Ok(output_path) }
+                    continue;
+                }
+                Err(_) => {
+                    // if any of the files changed, then all subsequent files depend on them
+                    // so it makes sense to re-compile those.
+                    dependency_has_changed = true;
+                }
+            }
+        }
+        if dependency_has_changed {
+            delete_prefixes.insert(format!("{out_prefix}{name}"));
+            delete_exclusions.push(output_path.clone());
+            delete_exclusions.push(hash_file_path.clone());
+        }
+
+        let args = [
+            &crate_type,
+            "--target", "wasm32-unknown-unknown",
+            "-C", "debuginfo=0",
+            "-C", "debug-assertions=off",
+            "-C", "codegen-units=16",
+            "-C", "embed-bitcode=no",
+            "-C", "strip=symbols",
+            "-C", "lto=no",
+            "--crate-name", name,
+            "-L", "./",
+            "-o", &output_name,
+            "-"
+        ];
+
+        compile_single_file(&args, output_dir, &contents)?;
+        // save a hash file so we can avoid compilation the next time:
+        let _ = std::fs::write(hash_file_path, "");
+        return_string = output_path;
+    }
+
+    // try to delete all past compiled files:
+    delete_old_artifacts(output_dir, delete_prefixes, delete_exclusions);
+
+    Ok(return_string)
+}
+
+
+pub fn delete_old_artifacts(
+    output_dir: &str,
+    delete_prefixes: HashSet<String>,
+    delete_exclusions: Vec<String>
+) {
+    if delete_exclusions.is_empty() {
+        return;
+    }
+
+    let readdir = match std::fs::read_dir(output_dir) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+
+    let mut filenames = vec![];
+    for entry in readdir {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let ftype = match entry.file_type() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let base_name = entry.file_name().to_string_lossy().to_string();
+        if ftype.is_file() {
+            filenames.push((base_name, entry.path().to_string_lossy().to_string()));
+        }
+    }
+
+    // now we have a list of files in this directory
+    // iterate over the delete prefixes and delete all files that match the prefix, and
+    // are not excluded by delete exclusions
+    for prefix in delete_prefixes {
+        for (base, path) in filenames.iter() {
+            if base.starts_with(&prefix) {
+                // delete it!
+                // but first.. check if its a file that we want to exclude from deletion:
+                // println!("I want to delete {base} because it starts with {prefix}");
+                if delete_exclusions.contains(path) {
+                    // println!("Delete exclusions contains {path} so i wont delete");
+                    continue;
+                }
+                // println!("Delete exclusions DOES NOT CONTAIN {path} so i WILL delete");
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+}
+
+pub fn compile_single_file(
+    args: &[&str],
+    output_dir: &str,
+    file_data: &str,
+) -> Result<(), String> {
+    // // for debugging:
+    // let mut out_str = "rustc ".to_string();
+    // for a in args {
+    //     out_str.push_str(&a);
+    //     out_str.push(' ');
+    // }
+    // println!("=> {out_str}");
+
+    let mut cmd = Command::new("rustc")
+        .current_dir(output_dir)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn().map_err(|e| format!("Failed to invoke rustc {:?}", e))?;
+    if let Some(mut stdin) = cmd.stdin.take() {
+        stdin.write_all(file_data.as_bytes()).map_err(|e| format!("Failed to write stdin for rustc invocation\n{:?}", e))?;
+    } else {
+        return Err(format!("Failed to get stdin handle when running {:?}", args));
+    }
+
+    let output = cmd.wait().map_err(|e| format!("Failed to compile {:?}\n{:?}", args, e))?;
+    if !output.success() {
+        let mut err = String::new();
+        if let Some(mut out) = cmd.stderr.take() {
+            out.read_to_string(&mut err).map_err(|e| format!("Failed to get stderr after failure to compile {:?}\n{:?}", args, e))?;
+        }
+        // println!("\n\nErr {err}");
+        return Err(format!("Failed to compile wasm module\n{}", err));
+    }
+    Ok(())
 }
 
 /// If output_dir is provided we output wasm binaries to:
