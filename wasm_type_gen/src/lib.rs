@@ -1,4 +1,4 @@
-use std::{path::PathBuf, process::{Command, Stdio}, io::{Write, Read}, collections::{HashSet}};
+use std::{path::PathBuf, process::{Command, Stdio}, io::{Write, Read}, collections::{HashSet}, format};
 
 use wasm_type_gen_derive::{generate_parsing_traits};
 pub use wasm_type_gen_derive::WasmTypeGen;
@@ -40,22 +40,67 @@ pub fn format_file_contents(data: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// new and improved compilation function.
-/// Provide a Vec<(S1, S2)> where the tuple has 2 strings:
-/// S1 is the name of the module being compiled, and S2 is the contents to compile.
-/// This function will compile in order of the vector, and the final element of the vector will be
-/// compiled to .wasm, whereas everything prior will be compiled to .rlib.
-/// This function skips compiling of each unit if that unit is already compiled.
-/// After compilation, this function will remove all other files that are .wasm and
-/// contain the name of the final module. For example consider:
-/// input: [("apple", "contents..."), ("orange", "contents...")]
-/// we compile libapple.{hash}.rlib
-/// and then orange.{hash}.wasm. If we detect that orange.{hash}.wasm doesnt exist,
-/// then we will iterate over the output_dir and remove anything with orange.*.wasm besides the one we
-/// just compiled.
-/// If successful, returns full path to the final .wasm file.
-pub fn compile_strings_to_wasm(
+/// given the name of a cargo dependency, use cargo rustc
+/// to compile that to a wasm .rlib.
+/// returns final path to wasm_deps_path + compiled rlib name
+pub fn compile_extern_crate(
+    wasm_deps_path: &str,
+    target_dir: &str,
+    dep_name: &str,
+) -> Result<String, String> {
+    // sigh.. when testing i found that rustc isnt able to emit the file name and also compile it for some reason.
+    // so this needs to be 2 steps :/
+    // we first get the file name.
+    let cmd_resp = Command::new("cargo")
+        .args(&[
+            "-q", "rustc", "--lib", "--package", dep_name, "--target", "wasm32-unknown-unknown",
+            "--target-dir", target_dir,
+            "--",
+            "--emit=link", "--crate-type=rlib", "--print=file-names"
+        ])
+        .output().map_err(|e| format!("Failed to compile dependency {}\n{:?}", dep_name, e))?;
+    if !cmd_resp.status.success() {
+        let err_str = String::from_utf8_lossy(&cmd_resp.stderr).to_string();
+        return Err(format!("Failed to compile dependency {}\n{}", dep_name, err_str));
+    }
+    let file_name = String::from_utf8_lossy(&cmd_resp.stdout).to_string();
+    // and then we actually compile it
+    let cmd_resp = Command::new("cargo")
+        .args(&[
+            "-q", "rustc", "--lib", "--package", dep_name, "--target", "wasm32-unknown-unknown",
+            "--target-dir", target_dir,
+            "--",
+            "--emit=link", "--crate-type=rlib",
+        ])
+        .output().map_err(|e| format!("Failed to compile dependency {}\n{:?}", dep_name, e))?;
+    if !cmd_resp.status.success() {
+        let err_str = String::from_utf8_lossy(&cmd_resp.stderr).to_string();
+        return Err(format!("Failed to compile dependency {}\n{}", dep_name, err_str));
+    }
+
+    Ok(format!("{}/{}", wasm_deps_path, file_name.trim()))
+}
+
+/// using `cargo metadata` we can get the output target directory
+pub fn get_target_dir() -> Result<String, String> {
+    // cargo -q metadata --format-version=1
+    let cmd_resp = Command::new("cargo")
+        .args(&["-q", "metadata", "--format-version=1"])
+        .output().map_err(|e| format!("Failed to get cargo metadata\n{:?}", e))?;
+    if !cmd_resp.status.success() {
+        let err_str = String::from_utf8_lossy(&cmd_resp.stderr).to_string();
+        return Err(format!("Failed to get cargo metadata\n{}", err_str));
+    }
+    let path = String::from_utf8_lossy(&cmd_resp.stdout).to_string();
+    Ok(path.trim().to_string())
+}
+
+/// Same as `compile_strings_to_wasm`, but optionally specify a list
+/// of names of crates that you want to be compiled as dependencies
+/// of your wasm code.
+pub fn compile_strings_to_wasm_with_extern_crates(
     data: &[(String, String)],
+    extern_crate_names: &[String],
     output_dir: &str,
 ) -> Result<String, String> {
     let mut delete_prefixes = HashSet::new();
@@ -67,7 +112,6 @@ pub fn compile_strings_to_wasm(
     let last_index = len - 1;
     let mut return_string = "".to_string();
 
-    // let mut externs = vec![];
     let mut dependency_has_changed = false;
 
     // if this is being compiled by rust analyzer, its for a keystroke, and
@@ -82,6 +126,26 @@ pub fn compile_strings_to_wasm(
             if std::fs::File::open(&output_path).is_ok() {
                 return Ok(output_path);
             }
+        }
+    }
+
+    // we add extra link args to each rustc command for each string we compile.
+    // the link args allow us to include depndencies that the wasm code wants to depend on.
+    let mut extra_link_args: Vec<String> = vec![];
+    if !extern_crate_names.is_empty() {
+        let target_dir = format!("{}/target", output_dir);
+        let wasm_deps_dir = format!("{}/wasm32-unknown-unknown/debug/deps", target_dir);
+        // we need this as well in case any dependency uses a proc macro. even though we compile for wasm,
+        // proc macros are compiled as shared objects into the normal debug/deps directory.
+        let deps_dir = format!("{}/debug/deps", target_dir);
+        extra_link_args.push("-L".to_string());
+        extra_link_args.push(wasm_deps_dir.clone());
+        extra_link_args.push("-L".to_string());
+        extra_link_args.push(deps_dir);
+        for extern_crate in extern_crate_names {
+            let compiled_file = compile_extern_crate(&wasm_deps_dir, &target_dir, &extern_crate)?;
+            extra_link_args.push("--extern".to_string());
+            extra_link_args.push(format!("{}={}", extern_crate, compiled_file));
         }
     }
 
@@ -125,7 +189,7 @@ pub fn compile_strings_to_wasm(
             delete_exclusions.push(hash_file_path.clone());
         }
 
-        let args = [
+        let mut args = vec![
             &crate_type,
             "--target", "wasm32-unknown-unknown",
             "-C", "debuginfo=0",
@@ -136,9 +200,15 @@ pub fn compile_strings_to_wasm(
             "-C", "lto=no",
             "--crate-name", name,
             "-L", "./",
-            "-o", &output_name,
-            "-"
         ];
+
+        for extra in &extra_link_args {
+            args.push(extra);
+        }
+        // these should always be at the end:
+        args.push(&"-o");
+        args.push(&output_name);
+        args.push(&"-");
 
         compile_single_file(&args, output_dir, &contents)?;
         // save a hash file so we can avoid compilation the next time:
@@ -150,6 +220,27 @@ pub fn compile_strings_to_wasm(
     delete_old_artifacts(output_dir, delete_prefixes, delete_exclusions);
 
     Ok(return_string)
+}
+
+/// new and improved compilation function.
+/// Provide a Vec<(S1, S2)> where the tuple has 2 strings:
+/// S1 is the name of the module being compiled, and S2 is the contents to compile.
+/// This function will compile in order of the vector, and the final element of the vector will be
+/// compiled to .wasm, whereas everything prior will be compiled to .rlib.
+/// This function skips compiling of each unit if that unit is already compiled.
+/// After compilation, this function will remove all other files that are .wasm and
+/// contain the name of the final module. For example consider:
+/// input: [("apple", "contents..."), ("orange", "contents...")]
+/// we compile libapple.{hash}.rlib
+/// and then orange.{hash}.wasm. If we detect that orange.{hash}.wasm doesnt exist,
+/// then we will iterate over the output_dir and remove anything with orange.*.wasm besides the one we
+/// just compiled.
+/// If successful, returns full path to the final .wasm file.
+pub fn compile_strings_to_wasm(
+    data: &[(String, String)],
+    output_dir: &str,
+) -> Result<String, String> {
+    compile_strings_to_wasm_with_extern_crates(data, &[], output_dir)
 }
 
 
