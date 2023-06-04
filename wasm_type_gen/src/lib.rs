@@ -102,6 +102,7 @@ pub fn compile_strings_to_wasm_with_extern_crates(
     data: &[(String, String)],
     extern_crate_names: &[String],
     output_dir: &str,
+    custom_codegen_options: Option<Vec<&str>>,
 ) -> Result<String, String> {
     let mut delete_prefixes = HashSet::new();
     let mut delete_exclusions = vec![];
@@ -145,7 +146,17 @@ pub fn compile_strings_to_wasm_with_extern_crates(
         for extern_crate in extern_crate_names {
             let compiled_file = compile_extern_crate(&wasm_deps_dir, &target_dir, &extern_crate)?;
             extra_link_args.push("--extern".to_string());
-            extra_link_args.push(format!("{}={}", extern_crate, compiled_file));
+            // this is a hack. for crate names that have dashes in them,
+            // to compile them with cargo, you must provide the name with the dash.
+            // but when compiling with rustc, and passing externs, it expects it
+            // to be converted to underscore. our hack is to try to see if the file name
+            // doesnt contain the crate name (ie: - != _)
+            // and if so, then replace it with underscroe
+            if !compiled_file.contains(extern_crate) {
+                extra_link_args.push(format!("{}={}", extern_crate.replace("-", "_"), compiled_file));
+            } else {
+                extra_link_args.push(format!("{}={}", extern_crate, compiled_file));
+            }
         }
     }
 
@@ -192,15 +203,21 @@ pub fn compile_strings_to_wasm_with_extern_crates(
         let mut args = vec![
             &crate_type,
             "--target", "wasm32-unknown-unknown",
-            "-C", "debuginfo=0",
-            "-C", "debug-assertions=off",
-            "-C", "codegen-units=16",
-            "-C", "embed-bitcode=no",
-            "-C", "strip=symbols",
-            "-C", "lto=no",
-            "--crate-name", name,
-            "-L", "./",
         ];
+        if let Some(codegen_opts) = &custom_codegen_options {
+            args.extend(codegen_opts);
+        } else {
+            // use defaults. good for cargo since its fast, although bloated.
+            args.extend([
+                "-C", "debuginfo=0",
+                "-C", "debug-assertions=off",
+                "-C", "codegen-units=16",
+                "-C", "embed-bitcode=no",
+                "-C", "strip=symbols",
+                "-C", "lto=no",
+            ]);
+        }
+        args.extend(["--crate-name", name, "-L", "./"]);
 
         for extra in &extra_link_args {
             args.push(extra);
@@ -240,7 +257,7 @@ pub fn compile_strings_to_wasm(
     data: &[(String, String)],
     output_dir: &str,
 ) -> Result<String, String> {
-    compile_strings_to_wasm_with_extern_crates(data, &[], output_dir)
+    compile_strings_to_wasm_with_extern_crates(data, &[], output_dir, None)
 }
 
 
