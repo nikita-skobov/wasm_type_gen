@@ -115,6 +115,16 @@ pub fn get_target_dir() -> Result<String, String> {
     Ok(path.trim().to_string())
 }
 
+pub fn print_debug<S: AsRef<str>>(out_f: &str, contents: S) {
+    let mut out_f = if let Ok(f) = std::fs::File::options().create(true).append(true).open(out_f) {
+        f
+    } else {
+        return
+    };
+    // best effort
+    let _ = out_f.write_all(contents.as_ref().as_bytes());
+}
+
 /// Same as `compile_strings_to_wasm`, but optionally specify a list
 /// of names of crates that you want to be compiled as dependencies
 /// of your wasm code.
@@ -123,6 +133,7 @@ pub fn compile_strings_to_wasm_with_extern_crates(
     extern_crate_names: &[String],
     output_dir: &str,
     custom_codegen_options: Option<Vec<&str>>,
+    logfile: Option<&str>,
 ) -> Result<String, String> {
     let mut delete_prefixes = HashSet::new();
     let mut delete_exclusions = vec![];
@@ -164,7 +175,12 @@ pub fn compile_strings_to_wasm_with_extern_crates(
         extra_link_args.push("-L".to_string());
         extra_link_args.push(deps_dir);
         for extern_crate in extern_crate_names {
+            let now = std::time::Instant::now();
             let compiled_file = compile_extern_crate(output_dir, &wasm_deps_dir, &target_dir, &extern_crate)?;
+            let elapsed = now.elapsed().as_millis();
+            if let Some(logf) = logfile {
+                print_debug(logf, format!("Compiled extern crate {} -> {} dur={}ms\n", extern_crate, compiled_file, elapsed));
+            }
             extra_link_args.push("--extern".to_string());
             // this is a hack. for crate names that have dashes in them,
             // to compile them with cargo, you must provide the name with the dash.
@@ -277,7 +293,7 @@ pub fn compile_strings_to_wasm(
     data: &[(String, String)],
     output_dir: &str,
 ) -> Result<String, String> {
-    compile_strings_to_wasm_with_extern_crates(data, &[], output_dir, None)
+    compile_strings_to_wasm_with_extern_crates(data, &[], output_dir, None, None)
 }
 
 
