@@ -40,14 +40,28 @@ pub fn format_file_contents(data: &str) -> Result<String, String> {
     Ok(out)
 }
 
+pub fn try_find_existing_extern_crate_file(output_dir: &str, dep_name: &str) -> Result<String, String> {
+    let expected_file = format!("{output_dir}/externloc_{dep_name}.txt");
+    if let Ok(contents) = std::fs::read_to_string(&expected_file) {
+        return Ok(contents.trim().to_string());
+    }
+    Err(expected_file)
+}
+
 /// given the name of a cargo dependency, use cargo rustc
 /// to compile that to a wasm .rlib.
 /// returns final path to wasm_deps_path + compiled rlib name
 pub fn compile_extern_crate(
+    output_dir: &str,
     wasm_deps_path: &str,
     target_dir: &str,
     dep_name: &str,
 ) -> Result<String, String> {
+    // check if existing file already made by reading the location from cached file.
+    let cache_file_info = match try_find_existing_extern_crate_file(output_dir, dep_name) {
+        Ok(o) => return Ok(o),
+        Err(e) => e,
+    };
     // sigh.. when testing i found that rustc isnt able to emit the file name and also compile it for some reason.
     // so this needs to be 2 steps :/
     // we first get the file name.
@@ -78,7 +92,13 @@ pub fn compile_extern_crate(
         return Err(format!("Failed to compile dependency {}\n{}", dep_name, err_str));
     }
 
-    Ok(format!("{}/{}", wasm_deps_path, file_name.trim()))
+    // TODO: we are caching the location infinitely.
+    // we have no way to recover if the dependency has
+    // changed since the last time we built it...
+    let location = format!("{}/{}", wasm_deps_path, file_name.trim());
+    // best effort
+    let _ = std::fs::write(cache_file_info, &location);
+    Ok(location)
 }
 
 /// using `cargo metadata` we can get the output target directory
@@ -144,7 +164,7 @@ pub fn compile_strings_to_wasm_with_extern_crates(
         extra_link_args.push("-L".to_string());
         extra_link_args.push(deps_dir);
         for extern_crate in extern_crate_names {
-            let compiled_file = compile_extern_crate(&wasm_deps_dir, &target_dir, &extern_crate)?;
+            let compiled_file = compile_extern_crate(output_dir, &wasm_deps_dir, &target_dir, &extern_crate)?;
             extra_link_args.push("--extern".to_string());
             // this is a hack. for crate names that have dashes in them,
             // to compile them with cargo, you must provide the name with the dash.
