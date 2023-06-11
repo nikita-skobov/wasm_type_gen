@@ -40,13 +40,13 @@ pub fn format_file_contents(data: &str) -> Result<String, String> {
     Ok(out)
 }
 
-pub fn try_find_existing_extern_crate_file(output_dir: &str, dep_name: &str) -> Result<String, String> {
+pub fn try_find_existing_extern_crate_file(output_dir: &str, dep_name: &str) -> Result<(String, String), String> {
     let expected_file = format!("{output_dir}/externloc_{dep_name}.txt");
     if let Ok(contents) = std::fs::read_to_string(&expected_file) {
         let actual_path = contents.trim().to_string();
         // ensure it still exists:
         if std::fs::File::open(&actual_path).is_ok() {
-            return Ok(actual_path);
+            return Ok((expected_file, actual_path));
         }
     }
     Err(expected_file)
@@ -60,10 +60,18 @@ pub fn compile_extern_crate(
     wasm_deps_path: &str,
     target_dir: &str,
     dep_name: &str,
+    force_extern_compile: bool,
 ) -> Result<String, String> {
     // check if existing file already made by reading the location from cached file.
     let cache_file_info = match try_find_existing_extern_crate_file(output_dir, dep_name) {
-        Ok(o) => return Ok(o),
+        Ok((e, o)) => {
+            if force_extern_compile {
+                let _ = std::fs::remove_file(&e);
+                e
+            } else {
+                return Ok(o);
+            }
+        },
         Err(e) => e,
     };
     // sigh.. when testing i found that rustc isnt able to emit the file name and also compile it for some reason.
@@ -138,6 +146,7 @@ pub fn compile_strings_to_wasm_with_extern_crates(
     output_dir: &str,
     custom_codegen_options: Option<Vec<&str>>,
     logfile: Option<&str>,
+    force_extern_compile: bool,
 ) -> Result<String, String> {
     let mut delete_prefixes = HashSet::new();
     let mut delete_exclusions = vec![];
@@ -180,7 +189,7 @@ pub fn compile_strings_to_wasm_with_extern_crates(
         extra_link_args.push(deps_dir);
         for extern_crate in extern_crate_names {
             let now = std::time::Instant::now();
-            let compiled_file = compile_extern_crate(output_dir, &wasm_deps_dir, &target_dir, &extern_crate)?;
+            let compiled_file = compile_extern_crate(output_dir, &wasm_deps_dir, &target_dir, &extern_crate, force_extern_compile)?;
             let elapsed = now.elapsed().as_millis();
             if let Some(logf) = logfile {
                 print_debug(logf, format!("Compiled extern crate {} -> {} dur={}ms\n", extern_crate, compiled_file, elapsed));
@@ -297,7 +306,7 @@ pub fn compile_strings_to_wasm(
     data: &[(String, String)],
     output_dir: &str,
 ) -> Result<String, String> {
-    compile_strings_to_wasm_with_extern_crates(data, &[], output_dir, None, None)
+    compile_strings_to_wasm_with_extern_crates(data, &[], output_dir, None, None, false)
 }
 
 
