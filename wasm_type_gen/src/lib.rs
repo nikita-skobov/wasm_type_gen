@@ -43,7 +43,11 @@ pub fn format_file_contents(data: &str) -> Result<String, String> {
 pub fn try_find_existing_extern_crate_file(output_dir: &str, dep_name: &str) -> Result<String, String> {
     let expected_file = format!("{output_dir}/externloc_{dep_name}.txt");
     if let Ok(contents) = std::fs::read_to_string(&expected_file) {
-        return Ok(contents.trim().to_string());
+        let actual_path = contents.trim().to_string();
+        // ensure it still exists:
+        if std::fs::File::open(&actual_path).is_ok() {
+            return Ok(actual_path);
+        }
     }
     Err(expected_file)
 }
