@@ -148,6 +148,24 @@ pub fn compile_strings_to_wasm_with_extern_crates(
     logfile: Option<&str>,
     force_extern_compile: bool,
 ) -> Result<String, String> {
+    let output_dir_string: String;
+    let output_dir = if output_dir.starts_with("./") {
+        // try to canonicalize it to absolute path
+        // best effort, so if we fail just use it as is.
+        let p = PathBuf::from(output_dir);
+        match p.canonicalize() {
+            Ok(o) => {
+                output_dir_string = o.to_string_lossy().to_string();
+                if let Some(logf) = logfile {
+                    print_debug(logf, format!("Canonicalized {} -> {}\n", output_dir, output_dir_string));
+                }
+                output_dir_string.as_str()
+            }
+            Err(_) => output_dir
+        }
+    } else {
+        output_dir
+    };
     let mut delete_prefixes = HashSet::new();
     let mut delete_exclusions = vec![];
     let len = data.len();
